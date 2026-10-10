@@ -9,15 +9,29 @@ travel through the Linux kernel and the hardware underneath it.
 ## Try the desktop lab
 
 Open http://localhost:3000/desktop after the quick start below. It is a
-simulated Linux desktop: open the browser and search, or open the terminal
-and run `cat notes.txt`, then watch every step go from user space through the
-kernel and the hardware, out to the DNS resolver and the web server, packet by
-packet. Pause, step and replay; switch between an overview and a deep dive;
-caches stay warm between runs, so the second search skips DNS and the TCP and
-TLS handshakes.
+simulated Linux desktop, and everything you do on it is traced from user space
+through the kernel and the hardware:
+
+- **Start and stop it:** shut down or restart from the Start menu, then press
+  the power button: firmware, bootloader, kernel, systemd, DHCP, login.
+- **Launch an app:** clone, copy-on-write, execve, the ELF loader, the dynamic
+  linker and the page faults that pull code in.
+- **Open a file:** open() and read(), the VFS and the page cache. The first read
+  misses and goes to the SSD; the second hits RAM.
+- **Type:** one key from the keyboard's USB report through an interrupt, the
+  HID driver, evdev and the compositor to the app, as a Wayland message.
+- **Search the web:** DNS, ARP, NAT, TCP, TLS and HTTP/2, packet by packet.
+- **Play sound or video:** PipeWire's real-time thread, the ring buffer, DMA
+  and the speakers; frames flipped at the display's refresh.
+- **Copy and paste:** the compositor brokers it; the text moves through a pipe
+  only when you paste.
+
+Pause, step and replay; switch between an overview and a deep dive. Caches stay
+warm between runs, so a second read, launch or search does less work.
 
 It is a teaching model with scripted steps, not a live trace (see
-[ADR 0002](docs/adr/0002-build-a-desktop-lab-ahead-of-the-roadmap.md)).
+[ADR 0002](docs/adr/0002-build-a-desktop-lab-ahead-of-the-roadmap.md) and
+[ADR 0003](docs/adr/0003-model-one-desktop-linux-stack.md)).
 
 ## What it will be
 

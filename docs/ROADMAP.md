@@ -30,19 +30,25 @@ Each task is one learning step and roughly one commit. Work them in order.
   (CI green + one review).
   *Done when:* `main` contains phase 0 and CI is green on it.
 
-## Built ahead: desktop lab (done, see ADR 0002)
+## Built ahead: desktop lab (done, see ADR 0002 and 0003)
 
-A simulated desktop at `/desktop`: open the browser or the terminal, search
-the web or run `cat notes.txt`, and watch each step go through user space, the
-kernel, the hardware and the network. It was built in one go at my request,
-ahead of the phases it borrows from. The engine and scenarios are in
+A simulated desktop at `/desktop`: use the computer and watch each step go
+through user space, the kernel, the hardware and the network. Traced: starting
+and shutting down (firmware, bootloader, kernel, systemd, DHCP, logind, ACPI),
+logging in, launching an app (clone, copy-on-write, execve, the ELF loader,
+ld.so, page faults), opening a file (the page cache hit or miss, NVMe, DMA),
+typing (USB, HID, evdev, the compositor, Wayland), a web search, playing sound
+and video (PipeWire, real-time scheduling, HD Audio), and copy and paste. It
+was built in one go at my request, ahead of the phases it borrows from (ADR
+0002), on one reference stack (ADR 0003). The engine and scenarios are in
 `web/lib/xray/`, the machine view in `web/components/lab/` and the desktop in
 `web/components/desktop/`.
 
 Tasks to make it mine, any time after phase 1 starts:
 
 - [ ] **L.1 Read the engine.** Walk through `engine.ts` and its tests, and
-  explain how stepping back also rewinds the screen. Add one test of your own.
+  explain how stepping back also rewinds the screen, and why a field a trace
+  will change is locked until the trace ends. Add one test of your own.
   *Concepts:* reducers, pure functions, derived state.
   *Docs:* React "Extracting State Logic into a Reducer"; Vitest "Getting
   Started".

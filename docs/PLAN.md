@@ -53,7 +53,7 @@ The MVP ships three zoom levels and three traced scenarios; everything else wait
 - Inspector panel per component: what it is, why it exists, typical size and latency, links to further reading. Kernel components also link to their source and docs at the pinned kernel version.
 - Approximate latency figures, clearly labelled as typical orders of magnitude.
 - Kernel content targets one pinned Linux release (see Open decisions), stated in the UI.
-- Desktop lab, built ahead of the phases (ADR 0002): a simulated desktop at `/desktop` whose browser and terminal are traced through user space, the kernel, the hardware and the network. Scenarios: launch an app, a web search (DNS, ARP, NAT, TCP, TLS, HTTP/2) and `cat` of a file (page cache, NVMe, DMA, interrupt).
+- Desktop lab, built ahead of the phases (ADR 0002, ADR 0003): a simulated desktop at `/desktop` whose every action is traced through user space, the kernel, the hardware and the network. Scenarios: boot, login, shutdown and restart; launching an app (fork, exec, ELF loading, dynamic linking, page faults); opening a file (page cache hit or miss, NVMe, DMA); typing (USB, HID, evdev, Wayland); a web search (DNS, ARP, NAT, TCP, TLS, HTTP/2); playing sound and video (PipeWire, real-time scheduling, HD Audio); copy and paste.
 
 ### Later (v0.2 and beyond)
 
