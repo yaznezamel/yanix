@@ -21,10 +21,15 @@ tracer (see `docs/adr/0001-extend-scope-to-the-linux-kernel.md`).
 
 Track the current phase and task here so each session knows where to resume.
 
-- Current phase: **0. Foundations**
-- Done: 0.1 repository foundation (licences, ignore files, plan, ADR template);
-  scope extended to the Linux kernel (ADR 0001)
-- Next: 0.2 FastAPI skeleton with `/api/v1/health`
+- Current phase: **0. Foundations**, built by the assistant at my request;
+  done once CI is green on GitHub (the compose job proves `docker compose up`).
+- Done: 0.1 repository foundation; scope extended to the Linux kernel (ADR
+  0001); renamed to Yanix; realistic PC prototype in `docs/prototype/`;
+  0.2 FastAPI skeleton (`/api/v1/health`, tests, ruff, strict pyright);
+  0.3 Next.js skeleton calling the API from a server component;
+  0.4 Dockerfiles and `docker-compose.yml`; 0.5 GitHub Actions CI.
+- Next: phase 1, task 1.1, Pydantic models for the component YAML. From
+  phase 1 on, I write the code and the assistant teaches and reviews.
 
 ## Who I am
 
