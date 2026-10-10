@@ -6,7 +6,7 @@ before starting work.
 
 ## Project
 
-SiliconMap (working name): an open source, browser based explorer that shows
+Yanix: an open source, browser based explorer that shows
 how a computer works inside, from a syscall down to silicon: Linux kernel
 subsystems and the hardware under them, in a zoomable C4 style map with traced
 scenarios. It is a teaching model with scripted traces, not a live kernel

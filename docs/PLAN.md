@@ -11,7 +11,9 @@ Two ideas carry the product:
 - **Zoomable map, C4 style.** The landing view is the whole machine: a user process, the Linux kernel, CPU package, RAM, chipset, storage, NIC. Clicking a component opens the level inside it, the same way LikeC4 lets you drill from a system into its containers and components. The kernel opens into its subsystems (syscall entry, VFS, page cache, block layer, NVMe driver, interrupt handling, scheduler). CPU opens into cores, shared L3 and the memory controller. A core opens into registers, ALU, L1 and L2, TLB and the pipeline.
 - **Traced scenarios.** A user picks a scenario such as "read 4 KB from a file" and presses play. Each hop lights up in order, across both planes: `read()` enters the kernel, VFS, page cache miss, block layer, NVMe driver rings the doorbell, the SSD DMAs the block into RAM, an interrupt fires, the process wakes and the data is copied to user space. A latency counter shows why each layer exists.
 
-Working name: **SiliconMap** (placeholder, change freely).
+Name: **Yanix**.
+
+**Visual direction.** Hardware levels look like the real thing, seen from above: a motherboard with a CPU socket and heat spreader, DIMMs, an M.2 SSD and a chipset heatsink; the CPU opens into a die floorplan (cores, L3 slices, ring bus, memory controller and PCIe with their PHY strips); a core opens into its floorplan, where caches show as regular SRAM grids and logic as irregular cells. Floorplans are illustrative, not a real chip, and say so. Kernel levels are software, so they use a clean diagram style. Signals between parts glow and move along the path. A clickable prototype of this look was built before implementation.
 
 The gap this fills: existing tools cover one piece each (Ripes for pipelines, Beto and similar for caches, samwho.dev/numbers for latency, static kernel diagrams such as the Linux kernel map). None ties a syscall, kernel subsystems, DMA, interrupts, caches, RAM and disk into one interactive picture.
 
@@ -202,7 +204,7 @@ Next.js with React Flow on the front, FastAPI with Pydantic on the back, YAML co
 |---|---|---|
 | Frontend framework | Next.js (App Router) + TypeScript strict | The stack I want to learn; file based routing maps cleanly to zoom paths |
 | Canvas | React Flow (xyflow) | Nodes, edges, pan and zoom, custom node components; LikeC4 style drilling is natural |
-| Auto layout | ELK.js | Clean layered layouts without hand placing every node |
+| Layout | Hand placed coordinates for hardware levels; ELK.js for kernel levels | A realistic board needs parts where they really sit; software diagrams lay out well automatically |
 | Animation | Motion (formerly Framer Motion) | Zoom transitions and trace pulses with reduced motion support |
 | Styling | Tailwind CSS + shadcn/ui | Fast, consistent, accessible primitives I own the code of |
 | Client state | Zustand | Small store for selection, playback and current path |
@@ -222,7 +224,7 @@ Why a backend at all: the catalog could be static, but the cache playground and 
 One monorepo with three top level parts: web, api and content.
 
 ```
-siliconmap/
+yanix/
 ├── web/                      # Next.js app
 │   ├── app/
 │   │   ├── page.tsx          # System level
@@ -235,7 +237,7 @@ siliconmap/
 │   ├── lib/api/              # generated client + query hooks
 │   └── stores/               # Zustand stores
 ├── api/                      # FastAPI app
-│   ├── src/siliconmap/
+│   ├── src/yanix/
 │   │   ├── main.py
 │   │   ├── routers/          # catalog.py, scenarios.py, simulate.py
 │   │   ├── models/           # Pydantic models
@@ -292,7 +294,7 @@ The biggest risk is scope: hardware is endless, so the MVP stays at three levels
 |---|---|
 | Scope creep into deeper levels | Hard MVP list; new ideas go to a Later issue label |
 | Wrong or oversimplified facts | Source on every figure; factual correction template; simplifications called out in the inspector |
-| Beautiful UI eats all the time | Ship phase 2 with plain nodes, design pass in phase 6 |
+| Beautiful UI eats all the time | Realistic hardware art is a goal, so budget it: reusable SVG parts (chip, DIMM, M.2, SRAM block, logic block) built once in phase 2, then reused; plain kernel nodes until phase 6 |
 | Learning two stacks at once stalls progress | Backend phases first (familiar ground), then frontend; one concept per task |
 | Animations hurt performance or accessibility | Reduced motion mode from day one; NFR1 checked in phase 4 |
 | Kernel internals change between releases | Pin one kernel release; link every symbol to source at that version; note the version in the UI |
@@ -301,7 +303,7 @@ The biggest risk is scope: hardware is endless, so the MVP stays at three levels
 
 ### Open decisions
 
-- [ ] Final project name and domain (SiliconMap may undersell the kernel plane).
+- [x] Project name: Yanix. Domain still open.
 - [ ] Which kernel release to pin (a current LTS from kernel.org/category/releases.html).
 - [ ] Which filesystem the read trace uses (ext4 is the likely default).
 - [ ] Generic "teaching CPU" vs modelled on a real family (for example a modern x86 desktop chip).

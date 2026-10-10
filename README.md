@@ -1,4 +1,4 @@
-# SiliconMap
+# Yanix
 
 Zoom into a computer, from a syscall down to silicon, and watch one request
 travel through the Linux kernel and the hardware underneath it.
