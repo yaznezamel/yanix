@@ -166,6 +166,9 @@ export function DesktopLab() {
   function start(action: PlayerAction) {
     setLayoutOverride(null);
     setSelected(null);
+    // Like a page load, a new trace takes focus off the button that started
+    // it, so Space then pauses the trace instead of pressing the button again.
+    if (document.activeElement instanceof HTMLButtonElement) document.activeElement.blur();
     dispatch(action);
   }
 
