@@ -53,7 +53,7 @@ The MVP ships three zoom levels and three traced scenarios; everything else wait
 - Inspector panel per component: what it is, why it exists, typical size and latency, links to further reading. Kernel components also link to their source and docs at the pinned kernel version.
 - Approximate latency figures, clearly labelled as typical orders of magnitude.
 - Kernel content targets one pinned Linux release (see Open decisions), stated in the UI.
-- Desktop lab, built ahead of the phases (ADR 0002, ADR 0003): a simulated desktop at `/desktop` whose every action is traced through user space, the kernel, the hardware and the network. Scenarios: boot, login, shutdown and restart; launching an app (fork, exec, ELF loading, dynamic linking, page faults); opening a file (page cache hit or miss, NVMe, DMA); typing (USB, HID, evdev, Wayland); a web search (DNS, ARP, NAT, TCP, TLS, HTTP/2); playing sound and video (PipeWire, real-time scheduling, HD Audio); copy and paste.
+- Desktop lab, built ahead of the phases (ADR 0002, ADR 0003): a simulated desktop at `/desktop` whose every action is traced through user space, the kernel, the hardware and the network. Scenarios: boot, login, shutdown and restart; launching an app (fork, exec, ELF loading, dynamic linking, page faults); opening a file (page cache hit or miss, NVMe, DMA); typing (USB, HID, evdev, Wayland); a web search (DNS, ARP, NAT, TCP, TLS, HTTP/2); playing sound and video (PipeWire, real-time scheduling, HD Audio); copy and paste. A Hardware tab next to the software path zooms from the motherboard into the CPU and a core, lit by the same traces (ADR 0004).
 
 ### Later (v0.2 and beyond)
 
@@ -204,7 +204,7 @@ Next.js with React Flow on the front, FastAPI with Pydantic on the back, YAML co
 | Layer | Choice | Why |
 |---|---|---|
 | Frontend framework | Next.js (App Router) + TypeScript strict | The stack I want to learn; file based routing maps cleanly to zoom paths |
-| Canvas | React Flow (xyflow) | Nodes, edges, pan and zoom, custom node components; LikeC4 style drilling is natural |
+| Canvas | React Flow (xyflow); the desktop lab's hardware view is SVG with its own camera (ADR 0004) | Nodes, edges, pan and zoom, custom node components; LikeC4 style drilling is natural. The hardware view needed nested floorplans, semantic zoom and one clock with the traces, which React Flow fights |
 | Layout | Hand placed coordinates for hardware levels; ELK.js for kernel levels | A realistic board needs parts where they really sit; software diagrams lay out well automatically |
 | Animation | Motion (formerly Framer Motion) | Zoom transitions and trace pulses with reduced motion support |
 | Styling | Tailwind CSS + shadcn/ui | Fast, consistent, accessible primitives I own the code of |
@@ -235,10 +235,12 @@ yanix/
 │   ├── components/
 │   │   ├── canvas/           # React Flow nodes, edges, layout
 │   │   ├── desktop/          # simulated desktop, browser, terminal
+│   │   ├── hardware/         # zoomable hardware view (ADR 0004)
 │   │   ├── lab/              # machine view, narration, packet panel
 │   │   ├── inspector/
 │   │   └── playback/
 │   ├── lib/api/              # generated client + query hooks
+│   ├── lib/hardware/         # hardware hierarchy, camera, activity
 │   ├── lib/xray/             # desktop lab engine and scenarios
 │   └── stores/               # Zustand stores
 ├── api/                      # FastAPI app
@@ -311,7 +313,7 @@ The biggest risk is scope: hardware is endless, so the MVP stays at three levels
 - [x] Project name: Yanix. Domain still open.
 - [ ] Which kernel release to pin (a current LTS from kernel.org/category/releases.html).
 - [ ] Which filesystem the read trace uses (ext4 is the likely default).
-- [ ] Generic "teaching CPU" vs modelled on a real family (for example a modern x86 desktop chip).
+- [x] Generic "teaching CPU" vs modelled on a real family: generic and labelled illustrative, with no unsourced sizes or speeds (ADR 0004).
 - [ ] Traces computed fully on the backend, or scenario steps sent once and animated on the client.
 - [ ] Monorepo tooling: plain folders, or Turborepo.
 - [ ] Whether the cache playground runs in Python only, or also a TypeScript port for offline use.

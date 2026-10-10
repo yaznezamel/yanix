@@ -32,7 +32,10 @@ as they finish.
   built by the assistant at my request, then extended with boot, shutdown,
   launch, file, keyboard, media and clipboard traces on one reference stack
   (ADR 0003; code references checked against Linux v7.2). Its study tasks
-  (L.1 to L.5) are in the roadmap.
+  (L.1 to L.6) are in the roadmap.
+- In progress, ahead of the roadmap: a zoomable hardware view in the lab
+  (ADR 0004), in five phases (H.1 to H.5 in the roadmap), each built by the
+  assistant at my request and reviewed by me before the next. H.1 is built.
 - Still to do by hand: branch protection on `main` (CI green + one review).
 - Next: phase 1, task 1.1, Pydantic models for the component YAML. From
   phase 1 on, I write the code and the assistant teaches and reviews.

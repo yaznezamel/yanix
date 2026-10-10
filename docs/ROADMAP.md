@@ -66,6 +66,37 @@ Tasks to make it mine, any time after phase 1 starts:
   API.
   *Done when:* changing a step's text needs no TypeScript change.
 - [ ] **L.5 Light theme (NFR4).** Together with task 6.1.
+- [ ] **L.6 Read the camera.** Walk through `web/lib/hardware/camera.ts` and
+  its tests: world and screen coordinates, zooming around the pointer, and why
+  one SVG transform per frame keeps zooming smooth without re-rendering React.
+  Add a test of your own (for example, that a drag never moves the camera
+  outside the computer).
+  *Concepts:* coordinate transforms, pure functions, refs versus state.
+  *Docs:* MDN "transform" (SVG attribute); React "Referencing Values with Refs".
+  *Done when:* you can derive `zoomAround`'s formula on paper and your test
+  passes.
+
+### Hardware view (in progress, see ADR 0004)
+
+A Hardware tab next to the lab's software map. You zoom from the whole
+computer into the CPU, a core and, later, the data path; the parts and wires
+the current step uses light up, in step with the timeline. It is built in five
+phases, each one reviewed before the next:
+
+- [x] **H.1 Model and camera.** The hierarchy as data (`web/lib/hardware/`),
+  zoom, pan, click to fly in, keyboard, level of detail, breadcrumb, one
+  playhead shared by every view, and a timeline you can drag. Plain boxes.
+- [ ] **H.2 Machine and CPU drawings.** The motherboard and CPU package drawn
+  as hardware, with hover cards.
+- [ ] **H.3 Core and data path.** The core's units and the data path below
+  them, with each step's events animated at every level.
+- [ ] **H.4 RAM, SSD and network controller.** DIMM chips and banks, the
+  SSD's controller and flash, the NIC's DMA rings.
+- [ ] **H.5 Timeline sync and polish.** Following the signal across levels,
+  touch, and a 60 fps check on a mid-range laptop.
+
+Tasks 2.3, 3.4 and 3.5 below assumed React Flow for the zoomable map; re-plan
+them against this view before phase 2 starts (ADR 0004).
 
 ## Phase 1. Content and catalog API (backend, familiar ground)
 

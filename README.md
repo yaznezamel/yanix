@@ -26,8 +26,14 @@ through the kernel and the hardware:
 - **Copy and paste:** the compositor brokers it; the text moves through a pipe
   only when you paste.
 
-Pause, step and replay; switch between an overview and a deep dive. Caches stay
-warm between runs, so a second read, launch or search does less work.
+Pause, step, replay, or drag the timeline to any point. Switch between an
+overview and a deep dive. Caches stay warm between runs, so a second read,
+launch or search does less work.
+
+Next to the software path, the **Hardware** tab shows the same trace on the
+machine itself: zoom from the motherboard into the CPU and one of its cores,
+and watch the parts and wires each step uses light up. It is a generic,
+illustrative PC ([ADR 0004](docs/adr/0004-draw-the-hardware-view-as-svg-with-its-own-camera.md)).
 
 It is a teaching model with scripted steps, not a live trace (see
 [ADR 0002](docs/adr/0002-build-a-desktop-lab-ahead-of-the-roadmap.md) and
