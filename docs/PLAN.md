@@ -4,16 +4,18 @@ Oct 10, 2026 · @Yazn
 
 ## Vision
 
-Build an open source, browser based explorer that shows how a computer works inside, from the whole machine down to a single cache line, and lets people watch one request travel through it.
+Build an open source, browser based explorer that shows how a computer works inside, **from a syscall down to silicon**: the Linux kernel subsystems a request passes through and the hardware underneath them, from the whole machine down to a single cache line. It lets people watch one request travel through both.
 
 Two ideas carry the product:
 
-- **Zoomable map, C4 style.** The landing view is the whole PC: CPU package, RAM, chipset, storage, NIC. Clicking a component opens the level inside it, the same way LikeC4 lets you drill from a system into its containers and components. CPU opens into cores, shared L3 and the memory controller. A core opens into registers, ALU, L1 and L2, TLB and the pipeline.
-- **Traced scenarios.** A user picks a scenario such as "read 4 KB from a file" and presses play. Each hop lights up in order (L1 miss, L2 miss, L3 miss, RAM, page fault, DMA from disk, interrupt) with a latency counter that shows why each layer exists.
+- **Zoomable map, C4 style.** The landing view is the whole machine: a user process, the Linux kernel, CPU package, RAM, chipset, storage, NIC. Clicking a component opens the level inside it, the same way LikeC4 lets you drill from a system into its containers and components. The kernel opens into its subsystems (syscall entry, VFS, page cache, block layer, NVMe driver, interrupt handling, scheduler). CPU opens into cores, shared L3 and the memory controller. A core opens into registers, ALU, L1 and L2, TLB and the pipeline.
+- **Traced scenarios.** A user picks a scenario such as "read 4 KB from a file" and presses play. Each hop lights up in order, across both planes: `read()` enters the kernel, VFS, page cache miss, block layer, NVMe driver rings the doorbell, the SSD DMAs the block into RAM, an interrupt fires, the process wakes and the data is copied to user space. A latency counter shows why each layer exists.
 
 Working name: **SiliconMap** (placeholder, change freely).
 
-The gap this fills: existing tools cover one piece each (Ripes for pipelines, Beto and similar for caches, samwho.dev/numbers for latency). None ties DMA, interrupts, caches, RAM and disk into one interactive picture.
+The gap this fills: existing tools cover one piece each (Ripes for pipelines, Beto and similar for caches, samwho.dev/numbers for latency, static kernel diagrams such as the Linux kernel map). None ties a syscall, kernel subsystems, DMA, interrupts, caches, RAM and disk into one interactive picture.
+
+It is a **teaching model**: content is hand written and traces are scripted. It does not trace a live kernel (see Non goals).
 
 ## Learning goals
 
@@ -38,20 +40,25 @@ The MVP ships three zoom levels and three traced scenarios; everything else wait
 
 ### MVP (v0.1)
 
-- Zoom levels: System, CPU package, CPU core.
-- Components: CPU, cores, registers, ALU, L1i, L1d, L2, L3, TLB, memory controller, RAM, PCIe or chipset, NVMe SSD, DMA engine, interrupt controller.
+- Zoom levels: System, CPU package, CPU core, Kernel (one level of subsystems, no deeper).
+- Hardware components: CPU, cores, registers, ALU, L1i, L1d, L2, L3, TLB, memory controller, RAM, PCIe or chipset, NVMe SSD, DMA engine, interrupt controller.
+- Kernel components: syscall entry, VFS, page cache, filesystem (one, e.g. ext4), block layer, NVMe driver, interrupt handling, scheduler.
+- User space: one process node at System level, the starting point of syscall traces.
 - Scenarios:
-  1. Load a value: L1 hit vs full miss down to RAM.
-  2. Read a file block: page fault, NVMe read via DMA, interrupt, data lands in RAM then cache.
+  1. Load a value: L1 hit vs full miss down to RAM (hardware only).
+  2. `read()` a file block, syscall to silicon: syscall entry, VFS, page cache miss, filesystem maps the block, block layer, NVMe driver submits the command, SSD DMAs the block into RAM, interrupt, the waiting process is woken, data is copied to the user buffer. Ends with a second `read()` of the same block that hits the page cache, to show why the cache exists.
   3. Cache playground: user sets cache size, associativity and an access pattern; the backend simulates hits and misses.
-- Inspector panel per component: what it is, why it exists, typical size and latency, links to further reading.
+- Inspector panel per component: what it is, why it exists, typical size and latency, links to further reading. Kernel components also link to their source and docs at the pinned kernel version.
 - Approximate latency figures, clearly labelled as typical orders of magnitude.
+- Kernel content targets one pinned Linux release (see Open decisions), stated in the UI.
 
 ### Later (v0.2 and beyond)
 
 - Deeper levels: cache sets and lines, pipeline stages, page table walk.
+- Deeper kernel levels: scheduler internals, memory management (page fault handling, `mmap`), page table walk from the kernel side.
+- Kernel scenarios: page fault on an `mmap`ed file, context switch, `write()` and writeback, `fork()`/`exec()`, `io_uring` vs `read()`.
 - Multi core: cache coherence (MESI), false sharing.
-- GPU, NIC receive path, context switch, syscall.
+- GPU, NIC receive path (driver, NAPI, network stack, socket).
 - Community authored scenarios submitted as YAML pull requests.
 - Compare mode: HDD vs SSD, DDR4 vs DDR5.
 
@@ -60,6 +67,8 @@ The MVP ships three zoom levels and three traced scenarios; everything else wait
 - Cycle accurate or vendor accurate simulation (this is a teaching model, not gem5).
 - Running real machine code or emulating an ISA.
 - User accounts in the MVP.
+- Tracing a live kernel (eBPF, ftrace, perf). Traces are scripted teaching content, not recordings.
+- Modelling every subsystem, driver or architecture. One filesystem, one storage driver, one generic CPU.
 
 ## Requirements
 
@@ -77,6 +86,7 @@ The MVP ships three zoom levels and three traced scenarios; everything else wait
 - **FR10.** The backend shall expose the component catalog and scenarios through a versioned REST API (`/api/v1`).
 - **FR11.** The backend shall validate every component and scenario file against a schema at startup and reject invalid content with a clear error.
 - **FR12.** The system shall let contributors add a component or scenario by adding a YAML file, with no code change.
+- **FR13.** The system shall mark every component with its layer (user space, kernel or hardware) and render the layers so they are visually distinct, including during a trace that crosses between them.
 
 ### Non functional
 
@@ -88,21 +98,23 @@ The MVP ships three zoom levels and three traced scenarios; everything else wait
 - **NFR6.** The project shall use strict TypeScript and typed Python (mypy or pyright) with no implicit any.
 - **NFR7.** The CI pipeline shall run lint, type checks, unit tests and a build on every pull request.
 - **NFR8.** The project shall run locally with one command (`docker compose up`).
-- **NFR9.** Every latency or size figure shall carry a source link or be labelled as an approximation.
+- **NFR9.** Every latency or size figure shall carry a source link or be labelled as an approximation. Every kernel function, structure or behaviour named in content shall link to the source (e.g. elixir.bootlin.com) or documentation (docs.kernel.org) at the pinned kernel version.
 - **NFR10.** The UI shall work on screens from 375 px wide upward, with the canvas usable by touch.
 
 ## Component model
 
-Everything on screen comes from content files: components form a tree (the zoom levels), connections live inside a level, and scenarios are ordered steps that reference component ids.
+Everything on screen comes from content files: components form a tree (the zoom levels), connections live inside a level, and scenarios are ordered steps that reference component ids. Every component has a `layer` (`user`, `kernel` or `hardware`), so one tree and one trace engine cover both planes (FR13).
 
 ### Zoom levels
 
-1. System: CPU package, RAM, chipset or PCIe root, NVMe SSD, NIC, GPU (later).
-   1. CPU package: cores, shared L3, memory controller, interrupt controller, PCIe and IO block.
+1. System: user process, Linux kernel, CPU package, RAM, chipset or PCIe root, NVMe SSD, NIC, GPU (later).
+   1. Kernel: syscall entry, VFS, page cache, filesystem, block layer, NVMe driver, interrupt handling, scheduler.
+      1. Subsystem internals (later): e.g. scheduler run queues, memory management, network stack.
+   2. CPU package: cores, shared L3, memory controller, interrupt controller, PCIe and IO block.
       1. Core: register file, ALU, load and store unit, L1i, L1d, private L2, TLB, branch predictor.
          1. Cache (later): sets, ways, lines, tags.
-   2. RAM: DIMMs, channels, banks (later).
-   3. NVMe SSD: controller, DMA engine, flash (later).
+   3. RAM: DIMMs, channels, banks (later).
+   4. NVMe SSD: controller, DMA engine, flash (later).
 
 ### Component file (`content/components/cpu/core/l1d.yaml`)
 
@@ -110,6 +122,7 @@ Everything on screen comes from content files: components form a tree (the zoom 
 id: cpu.core.l1d
 name: L1 data cache
 parent: cpu.core
+layer: hardware
 kind: cache
 summary: Smallest, fastest cache, private to one core, holds data the core is using right now.
 why: RAM is about 100x slower than a register. L1 hides most of that gap for hot data.
@@ -121,6 +134,28 @@ expandable: false
 references:
   - title: What Every Programmer Should Know About Memory
     url: https://people.freebsd.org/~lstewart/articles/cpumemory.pdf
+```
+
+### Kernel component file (`content/components/kernel/pagecache.yaml`)
+
+Kernel components have no hardware specs; they name the code that implements them, linked at the pinned kernel version (NFR9).
+
+```yaml
+id: kernel.pagecache
+name: Page cache
+parent: kernel
+layer: kernel
+kind: cache
+summary: File contents the kernel keeps in RAM, so repeated reads do not go to the disk.
+why: An NVMe read is orders of magnitude slower than a RAM access. Keeping recently used file pages in otherwise free RAM hides that gap.
+source:
+  - symbol: filemap_read
+    file: mm/filemap.c
+    url: https://elixir.bootlin.com/linux/<pinned-version>/source/mm/filemap.c
+expandable: false
+references:
+  - title: "Kernel docs: Page Cache"
+    url: https://docs.kernel.org/<check-path-at-pinned-version>
 ```
 
 ### Level file (`content/levels/cpu.core.yaml`)
@@ -137,15 +172,24 @@ connections:
 
 ### Scenario file (`content/scenarios/read-file-block.yaml`)
 
+The flagship trace crosses user space, kernel and hardware. Steps without `latency_ns` have no sourced figure yet; NFR9 applies before any number is added.
+
 ```yaml
 id: read-file-block
-title: Read 4 KB from a file
+title: read() 4 KB from a file, syscall to silicon
 steps:
-  - { at: cpu.core.regs, to: cpu.core.l1d, latency_ns: 1, note: Load instruction asks L1 }
-  - { at: cpu.core.l1d, to: cpu.core.l2, latency_ns: 4, note: L1 miss }
-  - { at: cpu.core.tlb, latency_ns: 0, note: Page not mapped, page fault raised }
-  - { at: ssd.dma, to: ram, latency_ns: 80000, note: SSD copies the block into RAM via DMA, CPU is free }
-  - { at: cpu.apic, to: cpu.core, latency_ns: 1000, note: Interrupt signals completion }
+  - { at: user.process, to: kernel.syscall, note: "read(fd, buf, 4096) traps into the kernel" }
+  - { at: kernel.syscall, to: kernel.vfs, note: VFS resolves the open file and calls into the read path }
+  - { at: kernel.vfs, to: kernel.pagecache, note: Page cache lookup misses, the block is not in RAM }
+  - { at: kernel.pagecache, to: kernel.fs, note: Filesystem maps the file offset to a block on disk }
+  - { at: kernel.fs, to: kernel.block, note: An I/O request is submitted to the block layer }
+  - { at: kernel.block, to: kernel.nvme, note: NVMe driver writes a command to the submission queue and rings the doorbell }
+  - { at: kernel.sched, note: The process sleeps on the I/O; the scheduler runs something else }
+  - { at: ssd.dma, to: ram, latency_ns: 80000, note: SSD copies the block into a page cache page via DMA, CPU is free }
+  - { at: ssd, to: cpu.apic, latency_ns: 1000, note: Completion interrupt (MSI-X) }
+  - { at: cpu.apic, to: kernel.irq, note: Interrupt handler completes the request }
+  - { at: kernel.irq, to: kernel.sched, note: The waiting process is woken }
+  - { at: kernel.pagecache, to: user.process, note: copy_to_user copies the data into the user buffer; read() returns }
 ```
 
 The backend loads these files into Pydantic models; the same models generate the OpenAPI schema, which generates the TypeScript types. One source of truth from YAML to UI.
@@ -209,15 +253,15 @@ siliconmap/
 
 ## Milestones
 
-Seven phases, each ending in something that runs, sized for evenings and weekends (roughly 10 to 12 weeks to v0.1).
+Seven phases, each ending in something that runs, sized for evenings and weekends (roughly 11 to 13 weeks to v0.1; the kernel plane adds about a week, mostly content writing in phase 1).
 
 | Phase | Deliverable | What I learn | Done when |
 |---|---|---|---|
 | 0. Foundations (1 wk) | Monorepo, Next.js and FastAPI skeletons, compose, CI running lint and tests | Project layout in both ecosystems, uv, pnpm, Actions basics | `docker compose up` shows a page calling `/api/v1/health` |
-| 1. Content and catalog API (1.5 wk) | YAML schema, loader, validator, `GET /components`, `GET /levels/{id}` | Pydantic models, routers, dependency injection, pytest | Invalid YAML fails startup with a clear message; tests green |
-| 2. Static canvas (2 wk) | System level rendered with React Flow and ELK layout, custom node design | TypeScript basics, components, props, server vs client components | All System components and links render from the API |
-| 3. Drill down (2 wk) | Click to expand, breadcrumb, `/explore/[...path]`, zoom transition, inspector | Dynamic routes, layouts, state with Zustand, generated API client | Deep link to cpu/core opens directly; back works |
-| 4. Trace playback (2 wk) | Scenario list, play, pause, step, latency counter, cross level following | Custom hooks, effects, animation, timing | Scenario 1 and 2 play end to end across levels |
+| 1. Content and catalog API (2 wk) | YAML schema (with `layer`), loader, validator, `GET /components`, `GET /levels/{id}`, hardware and kernel content for the MVP levels | Pydantic models, routers, dependency injection, pytest | Invalid YAML fails startup with a clear message; tests green |
+| 2. Static canvas (2 wk) | System level rendered with React Flow and ELK layout, custom node design | TypeScript basics, components, props, server vs client components | All System components and links render from the API, with user, kernel and hardware layers visually distinct |
+| 3. Drill down (2 wk) | Click to expand, breadcrumb, `/explore/[...path]`, zoom transition, inspector | Dynamic routes, layouts, state with Zustand, generated API client | Deep links to cpu/core and kernel open directly; back works |
+| 4. Trace playback (2 wk) | Scenario list, play, pause, step, latency counter, cross level following | Custom hooks, effects, animation, timing | Scenario 1 and 2 play end to end across levels; scenario 2 crosses user, kernel and hardware |
 | 5. Cache playground (1.5 wk) | `POST /simulate/cache` plus UI form and hit or miss visual | Algorithms in Python, request validation, forms in React | Results match hand calculated examples in tests |
 | 6. Polish and launch (1.5 wk) | Dark mode, a11y pass, mobile, README with GIF, deploy, CONTRIBUTING | Performance profiling, accessibility, release process | Public URL live, v0.1 tagged, first issues labelled |
 
@@ -251,10 +295,15 @@ The biggest risk is scope: hardware is endless, so the MVP stays at three levels
 | Beautiful UI eats all the time | Ship phase 2 with plain nodes, design pass in phase 6 |
 | Learning two stacks at once stalls progress | Backend phases first (familiar ground), then frontend; one concept per task |
 | Animations hurt performance or accessibility | Reduced motion mode from day one; NFR1 checked in phase 4 |
+| Kernel internals change between releases | Pin one kernel release; link every symbol to source at that version; note the version in the UI |
+| Kernel plane doubles the scope | MVP kernel level is one level deep with one scenario; deeper kernel levels and scenarios go to Later |
+| Kernel facts are subtle and easy to get wrong | Every kernel claim links to source or docs; factual correction template applies to kernel content too |
 
 ### Open decisions
 
-- [ ] Final project name and domain.
+- [ ] Final project name and domain (SiliconMap may undersell the kernel plane).
+- [ ] Which kernel release to pin (a current LTS from kernel.org/category/releases.html).
+- [ ] Which filesystem the read trace uses (ext4 is the likely default).
 - [ ] Generic "teaching CPU" vs modelled on a real family (for example a modern x86 desktop chip).
 - [ ] Traces computed fully on the backend, or scenario steps sent once and animated on the client.
 - [ ] Monorepo tooling: plain folders, or Turborepo.

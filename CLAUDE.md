@@ -7,7 +7,10 @@ before starting work.
 ## Project
 
 SiliconMap (working name): an open source, browser based explorer that shows
-how a computer works inside, with a zoomable C4 style map and traced scenarios.
+how a computer works inside, from a syscall down to silicon: Linux kernel
+subsystems and the hardware under them, in a zoomable C4 style map with traced
+scenarios. It is a teaching model with scripted traces, not a live kernel
+tracer (see `docs/adr/0001-extend-scope-to-the-linux-kernel.md`).
 
 - `web/`: Next.js (App Router) + TypeScript strict, React Flow, Tailwind
 - `api/`: FastAPI + Pydantic v2, managed with uv, tested with pytest
@@ -19,7 +22,8 @@ how a computer works inside, with a zoomable C4 style map and traced scenarios.
 Track the current phase and task here so each session knows where to resume.
 
 - Current phase: **0. Foundations**
-- Done: 0.1 repository foundation (licences, ignore files, plan, ADR template)
+- Done: 0.1 repository foundation (licences, ignore files, plan, ADR template);
+  scope extended to the Linux kernel (ADR 0001)
 - Next: 0.2 FastAPI skeleton with `/api/v1/health`
 
 ## Who I am
@@ -48,7 +52,8 @@ Track the current phase and task here so each session knows where to resume.
 - Compare new frontend concepts to backend or DevOps concepts I know when the
   analogy is accurate.
 - Flag when a figure about hardware (size, latency) needs a source, and never
-  invent one.
+  invent one. The same applies to kernel behaviour: link kernel claims to
+  source or docs at the pinned kernel version.
 - End each task with two or three quick questions to check I understood it.
 - Respect the requirements (FR and NFR) in the plan and point out when a
   request would break one.

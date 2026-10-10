@@ -1,17 +1,18 @@
 # SiliconMap
 
-Zoom into a computer, from the whole machine down to a cache line, and watch one
-request travel through it.
+Zoom into a computer, from a syscall down to silicon, and watch one request
+travel through the Linux kernel and the hardware underneath it.
 
 > Status: early development (phase 0, foundations). Nothing runs yet.
 
 ## What it will be
 
-- **A zoomable map.** Start at the whole PC (CPU, RAM, chipset, SSD) and click
-  into the CPU, then into a core, C4 style.
-- **Traced scenarios.** Pick "read 4 KB from a file", press play, and watch each
-  hop light up (L1 miss, L2 miss, RAM, page fault, DMA, interrupt) with a running
-  latency counter.
+- **A zoomable map.** Start at the whole machine (a process, the Linux kernel,
+  CPU, RAM, SSD) and click into the kernel's subsystems, or into the CPU and
+  then a core, C4 style.
+- **Traced scenarios.** Pick "`read()` 4 KB from a file", press play, and watch
+  each hop light up (syscall, VFS, page cache miss, block layer, NVMe driver,
+  DMA, interrupt, wake up, copy to user) with a running latency counter.
 
 See [`docs/PLAN.md`](docs/PLAN.md) for the full plan, requirements and roadmap.
 
