@@ -67,3 +67,15 @@ as they finish.
   React Flow APIs change often.
 - Write a short ADR in `docs/adr/` for any decision that took more than ten
   minutes.
+
+## Commits and pull requests
+
+- Never mention Claude, Claude Code, Anthropic or AI assistance in commit
+  messages, pull request titles or bodies, code comments, or any other text
+  pushed to the repository.
+- No `Co-Authored-By` trailers, no "Generated with" lines, no session links.
+  (`.claude/settings.json` also turns Claude Code's attribution off.)
+- Commits are authored as me, with my git identity. Never set a Claude or
+  Anthropic author or committer.
+- Pull request bodies follow `.github/pull_request_template.md`: fill in every
+  section, tick the boxes that apply, and write "N/A" where a section does not.
