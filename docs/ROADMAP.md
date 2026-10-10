@@ -18,14 +18,14 @@ Each task is one learning step and roughly one commit. Work them in order.
 
 ---
 
-## Phase 0. Foundations (done, except 0.6)
+## Phase 0. Foundations (done)
 
 - [x] **0.1 Repository foundation.** Licences, ignore files, plan, ADR template.
 - [x] **0.2 FastAPI skeleton.** `GET /api/v1/health`, tests, ruff, strict pyright.
 - [x] **0.3 Next.js skeleton.** Server component calls the health endpoint.
 - [x] **0.4 Docker.** Dockerfiles for both, `docker-compose.yml`.
 - [x] **0.5 CI.** API, web and compose jobs in `.github/workflows/ci.yml`.
-- [ ] **0.6 Prove it on GitHub.** Open a pull request from the phase 0 branch,
+- [x] **0.6 Prove it on GitHub.** Open a pull request from the phase 0 branch,
   get all three CI jobs green, merge to `main`. Turn on branch protection
   (CI green + one review).
   *Done when:* `main` contains phase 0 and CI is green on it.
