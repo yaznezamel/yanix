@@ -20,6 +20,8 @@ tracer (see `docs/adr/0001-extend-scope-to-the-linux-kernel.md`).
 ## Progress
 
 Track the current phase and task here so each session knows where to resume.
+The task-by-task plan is [`docs/ROADMAP.md`](docs/ROADMAP.md); tick tasks there
+as they finish.
 
 - Current phase: **0. Foundations**, built by the assistant at my request;
   done once CI is green on GitHub (the compose job proves `docker compose up`).
@@ -28,7 +30,7 @@ Track the current phase and task here so each session knows where to resume.
   0.2 FastAPI skeleton (`/api/v1/health`, tests, ruff, strict pyright);
   0.3 Next.js skeleton calling the API from a server component;
   0.4 Dockerfiles and `docker-compose.yml`; 0.5 GitHub Actions CI.
-- Next: phase 1, task 1.1, Pydantic models for the component YAML. From
+- Next: 0.6 (pull request, green CI, merge), then phase 1, task 1.1. From
   phase 1 on, I write the code and the assistant teaches and reviews.
 
 ## Who I am
