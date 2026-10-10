@@ -28,6 +28,9 @@ as they finish.
   in CI on `main`, including the `docker compose up` job. Also: scope extended
   to the Linux kernel (ADR 0001), renamed to Yanix, realistic PC prototype in
   `docs/prototype/`.
+- Also done, ahead of the roadmap: the desktop lab at `/desktop` (ADR 0002),
+  built by the assistant at my request. Its study tasks (L.1 to L.5) are in
+  the roadmap.
 - Still to do by hand: branch protection on `main` (CI green + one review).
 - Next: phase 1, task 1.1, Pydantic models for the component YAML. From
   phase 1 on, I write the code and the assistant teaches and reviews.

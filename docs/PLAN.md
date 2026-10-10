@@ -38,7 +38,7 @@ My learning style: first principles, understand the why before the how, guided h
 
 ## Scope
 
-The MVP ships three zoom levels and three traced scenarios; everything else waits until that loop feels great.
+The MVP ships three zoom levels and three traced scenarios; everything else waits until that loop feels great. The desktop lab is the one exception, built early on request (ADR 0002).
 
 ### MVP (v0.1)
 
@@ -53,6 +53,7 @@ The MVP ships three zoom levels and three traced scenarios; everything else wait
 - Inspector panel per component: what it is, why it exists, typical size and latency, links to further reading. Kernel components also link to their source and docs at the pinned kernel version.
 - Approximate latency figures, clearly labelled as typical orders of magnitude.
 - Kernel content targets one pinned Linux release (see Open decisions), stated in the UI.
+- Desktop lab, built ahead of the phases (ADR 0002): a simulated desktop at `/desktop` whose browser and terminal are traced through user space, the kernel, the hardware and the network. Scenarios: launch an app, a web search (DNS, ARP, NAT, TCP, TLS, HTTP/2) and `cat` of a file (page cache, NVMe, DMA, interrupt).
 
 ### Later (v0.2 and beyond)
 
@@ -60,7 +61,7 @@ The MVP ships three zoom levels and three traced scenarios; everything else wait
 - Deeper kernel levels: scheduler internals, memory management (page fault handling, `mmap`), page table walk from the kernel side.
 - Kernel scenarios: page fault on an `mmap`ed file, context switch, `write()` and writeback, `fork()`/`exec()`, `io_uring` vs `read()`.
 - Multi core: cache coherence (MESI), false sharing.
-- GPU, NIC receive path (driver, NAPI, network stack, socket).
+- GPU internals. Deeper network levels (netfilter, TCP congestion control, Wi-Fi); the desktop lab covers the basic path through the socket, the network stack, the driver and the NIC.
 - Community authored scenarios submitted as YAML pull requests.
 - Compare mode: HDD vs SSD, DDR4 vs DDR5.
 
@@ -229,12 +230,16 @@ yanix/
 │   ├── app/
 │   │   ├── page.tsx          # System level
 │   │   ├── explore/[...path]/page.tsx
-│   │   └── scenarios/[id]/page.tsx
+│   │   ├── scenarios/[id]/page.tsx
+│   │   └── desktop/page.tsx  # desktop lab (ADR 0002)
 │   ├── components/
 │   │   ├── canvas/           # React Flow nodes, edges, layout
+│   │   ├── desktop/          # simulated desktop, browser, terminal
+│   │   ├── lab/              # machine view, narration, packet panel
 │   │   ├── inspector/
 │   │   └── playback/
 │   ├── lib/api/              # generated client + query hooks
+│   ├── lib/xray/             # desktop lab engine and scenarios
 │   └── stores/               # Zustand stores
 ├── api/                      # FastAPI app
 │   ├── src/yanix/

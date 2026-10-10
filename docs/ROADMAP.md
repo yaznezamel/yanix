@@ -30,6 +30,37 @@ Each task is one learning step and roughly one commit. Work them in order.
   (CI green + one review).
   *Done when:* `main` contains phase 0 and CI is green on it.
 
+## Built ahead: desktop lab (done, see ADR 0002)
+
+A simulated desktop at `/desktop`: open the browser or the terminal, search
+the web or run `cat notes.txt`, and watch each step go through user space, the
+kernel, the hardware and the network. It was built in one go at my request,
+ahead of the phases it borrows from. The engine and scenarios are in
+`web/lib/xray/`, the machine view in `web/components/lab/` and the desktop in
+`web/components/desktop/`.
+
+Tasks to make it mine, any time after phase 1 starts:
+
+- [ ] **L.1 Read the engine.** Walk through `engine.ts` and its tests, and
+  explain how stepping back also rewinds the screen. Add one test of your own.
+  *Concepts:* reducers, pure functions, derived state.
+  *Docs:* React "Extracting State Logic into a Reducer"; Vitest "Getting
+  Started".
+  *Done when:* you can explain `appsAt` and `machineAt` and your test passes.
+- [ ] **L.2 A `curl http://example.com` scenario.** Plain HTTP from the
+  terminal: no TLS, so the packet panel shows the request in the clear.
+  *Concepts:* union types (a new `ScenarioRequest` kind), narrowing.
+  *Done when:* the command plays in the terminal and the scenario tests pass.
+- [ ] **L.3 A `ping` scenario.** ICMP echo through the same path. Check first
+  how ping opens an ICMP socket without root (`ping_group_range` in
+  `man 7 icmp`).
+  *Done when:* the packet panel shows an IPv4 header with an ICMP payload.
+- [ ] **L.4 Scenarios from YAML (FR12).** After task 1.5, move the lab's
+  scenarios and node descriptions into `content/` and load them through the
+  API.
+  *Done when:* changing a step's text needs no TypeScript change.
+- [ ] **L.5 Light theme (NFR4).** Together with task 6.1.
+
 ## Phase 1. Content and catalog API (backend, familiar ground)
 
 - [ ] **1.1 Pydantic models for content.** `Component` (id, name, parent,
@@ -64,8 +95,8 @@ Each task is one learning step and roughly one commit. Work them in order.
 - [ ] **1.6 Write the MVP content.** Port every part from
   `docs/prototype/index.html` into YAML: components, levels (with hand placed
   coordinates for hardware levels), and the two scenarios.
-  Decide and record: which kernel release to pin (ADR 0002) and which
-  filesystem the trace uses.
+  Decide and record in an ADR: which kernel release to pin and which
+  filesystem the trace uses. Then pin the kernel paths in the desktop lab too.
   *Done when:* the real content loads, and every figure is sourced or labelled.
 - [ ] **1.7 Content in CI and for contributors (FR12).** A `validate` command
   that CI runs on `content/`; a first draft of CONTRIBUTING.md's content track.
@@ -96,7 +127,8 @@ Each task is one learning step and roughly one commit. Work them in order.
   *Concepts:* component composition, props with defaults, SVG in JSX.
   *Done when:* the System level looks like the prototype's motherboard.
 - [ ] **2.5 Layers visible (FR13).** Software strip for user and kernel, layer
-  colours as design tokens in Tailwind's theme.
+  colours as design tokens in Tailwind's theme (the desktop lab already
+  defines them in `app/globals.css`; reuse them).
   *Done when:* user, kernel and hardware are distinct at a glance.
 - [ ] **2.6 Accessibility baseline (NFR3).** Nodes are focusable with labels;
   Enter selects; visible focus ring.
@@ -131,10 +163,12 @@ Each task is one learning step and roughly one commit. Work them in order.
 ## Phase 4. Trace playback
 
 - [ ] **4.0 Decide where traces run.** Server-computed traces vs steps sent
-  once and animated on the client (open decision). Write ADR 0003.
+  once and animated on the client (open decision; the desktop lab animates on
+  the client, see ADR 0002). Record it in an ADR.
 - [ ] **4.1 Scenario pages (FR6).** `/scenarios` list and `/scenarios/[id]`.
 - [ ] **4.2 `usePlayback` hook.** Play, pause, step forward and back, reset;
-  timers cleaned up in effects; unit tests with Vitest.
+  timers cleaned up in effects; unit tests with Vitest (already set up; the
+  desktop lab's `web/lib/xray/engine.ts` is a reference reducer).
   *Docs:* React "Reusing Logic with Custom Hooks", "Synchronizing with Effects".
   *Done when:* the hook's tests cover every control.
 - [ ] **4.3 Highlight and signal (FR7).** Active part glows, the active path
