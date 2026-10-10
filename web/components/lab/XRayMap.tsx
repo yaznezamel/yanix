@@ -1,15 +1,8 @@
 "use client";
 
-import {
-  AnimatePresence,
-  animate,
-  motion,
-  useMotionValue,
-  type AnimationPlaybackControls,
-} from "motion/react";
-import { useEffect, useMemo, useRef } from "react";
-import { travelMs, type Speed } from "@/lib/xray/engine";
-import { buildPath, nodeIndexAt } from "@/lib/xray/geometry";
+import { AnimatePresence, motion, type MotionValue } from "motion/react";
+import { useEffect, useRef } from "react";
+import type { PathGeometry } from "@/lib/xray/geometry";
 import { BANDS, NODES, NODE_IDS, TOPOLOGY, VIEW } from "@/lib/xray/nodes";
 import { packetAt } from "@/lib/xray/packets";
 import type { Layer, MachineNode, NodeId, Packet, Step } from "@/lib/xray/types";
@@ -21,15 +14,15 @@ type NodeState = "idle" | "current" | "path" | "scenario" | "dim";
 interface XRayMapProps {
   step: Step | null;
   stepKey: string;
+  /** The step's route through the map. */
+  geometry: PathGeometry | null;
+  /** How far the signal has travelled along the route, from the shared playhead. */
+  progress: MotionValue<number>;
   /** Last path node the signal has reached. */
   reached: number;
-  playing: boolean;
-  speed: Speed;
-  reduced: boolean;
   selected: NodeId | null;
   scenarioNodes: ReadonlySet<NodeId> | null;
   onSelect: (id: NodeId) => void;
-  onReach: (stepKey: string, index: number) => void;
 }
 
 const BOUNDARIES = [
@@ -57,18 +50,13 @@ function crossings(step: Step | null): Set<BoundaryId> {
 export function XRayMap({
   step,
   stepKey,
+  geometry,
+  progress,
   reached,
-  playing,
-  speed,
-  reduced,
   selected,
   scenarioNodes,
   onSelect,
-  onReach,
 }: XRayMapProps) {
-  const geometry = useMemo(() => (step ? buildPath(step.path) : null), [step]);
-  const baseTravel = step ? travelMs(step, 1) : 0;
-  const progress = useMotionValue(0);
   const routeRef = useRef<SVGPathElement>(null);
   const markerRef = useRef<SVGGElement>(null);
   const capsuleRef = useRef<SVGGElement>(null);
@@ -77,65 +65,24 @@ export function XRayMap({
   // Tall boxes keep their label at the top: park the capsule under the signal there.
   const destination = step ? step.path[step.path.length - 1] : undefined;
   const capsuleBelow = destination ? NODES[destination].h >= 60 : false;
-  const controlsRef = useRef<AnimationPlaybackControls | null>(null);
-  const finishedRef = useRef(false);
-  const speedRef = useRef(speed);
-  const prevPlaying = useRef(playing);
 
-  // Keep the latest values for the travel effect without restarting it.
-  useEffect(() => {
-    speedRef.current = speed;
-    if (controlsRef.current) controlsRef.current.speed = speed;
-  }, [speed]);
-
-  // One travel animation per step: the motion value drives both the glowing
-  // trail and the packet marker, so pausing freezes both.
+  // The playhead's progress drives both the glowing trail and the packet
+  // marker, so pausing or scrubbing the timeline moves both.
   useEffect(() => {
     const route = routeRef.current;
     const marker = markerRef.current;
     if (!geometry || !route || !marker) return;
     const total = route.getTotalLength();
     const place = (p: number) => {
-      const point = route.getPointAtLength(total * p);
+      const point = route.getPointAtLength(total * Math.min(1, Math.max(0, p)));
       marker.setAttribute("transform", `translate(${point.x.toFixed(1)} ${point.y.toFixed(1)})`);
       lastPoint.current = { x: point.x, y: point.y };
       placeCapsule(capsuleRef.current, point, capsuleBelow);
     };
     belowRef.current = capsuleBelow;
-    finishedRef.current = false;
-    progress.jump(0);
-    place(0);
-    let last = 0;
-    const unsubscribe = progress.on("change", (p) => {
-      place(p);
-      const index = nodeIndexAt(geometry.nodeAt, p);
-      if (index !== last) {
-        last = index;
-        onReach(stepKey, index);
-      }
-      if (p >= 1) finishedRef.current = true;
-    });
-    const controls = animate(progress, 1, {
-      duration: reduced || baseTravel === 0 ? 0 : baseTravel / 1000,
-      ease: [0.42, 0, 0.2, 1],
-    });
-    controls.speed = speedRef.current;
-    controlsRef.current = controls;
-    return () => {
-      unsubscribe();
-      controls.stop();
-    };
-  }, [stepKey, geometry, baseTravel, reduced, progress, onReach, capsuleBelow]);
-
-  // Pause and resume the travel when the user does.
-  useEffect(() => {
-    if (prevPlaying.current === playing) return;
-    prevPlaying.current = playing;
-    const controls = controlsRef.current;
-    if (!controls || finishedRef.current) return;
-    if (playing) controls.play();
-    else controls.pause();
-  }, [playing]);
+    place(progress.get());
+    return progress.on("change", place);
+  }, [stepKey, geometry, progress, capsuleBelow]);
 
   // The capsule's width changes when headers are added; re-place it then.
   useEffect(() => {

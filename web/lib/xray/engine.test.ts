@@ -60,6 +60,15 @@ describe("playerReducer", () => {
     expect(run([search, { type: "seek", index: -5 }]).run?.index).toBe(0);
   });
 
+  it("reopens a finished run when the timeline is dragged into its last step", () => {
+    const end = run([search, { type: "finish" }]);
+    const last = end.run!.index;
+    expect(playerReducer(end, { type: "seek", index: last }).run?.status).toBe("done");
+    expect(playerReducer(end, { type: "seek", index: last, partial: true }).run?.status).toBe("paused");
+    const playing = run([search]);
+    expect(playerReducer(playing, { type: "seek", index: 2, partial: true }).run?.status).toBe("playing");
+  });
+
   it("rewinds the apps when you step back", () => {
     const end = run([search, { type: "finish" }]);
     expect(currentApps(end).browser.page).toBe("results");

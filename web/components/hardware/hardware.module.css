@@ -1,0 +1,63 @@
+/* The hardware view: a zoomable SVG. Labels and line widths stay the same size
+   on screen at any zoom: the camera sets --zoom on the SVG, and labels scale by
+   1 / --zoom while lines use vector-effect: non-scaling-stroke. */
+
+.canvas {
+  cursor: grab;
+  touch-action: none;
+  outline: none;
+}
+
+.canvas:active {
+  cursor: grabbing;
+}
+
+.canvas:focus-visible {
+  outline: 2px solid var(--color-signal);
+  outline-offset: -2px;
+}
+
+.group {
+  transition: opacity 0.3s;
+}
+
+.part {
+  cursor: pointer;
+  outline: none;
+}
+
+.part:focus-visible .box {
+  stroke: #ffffff;
+  stroke-width: 2.5px;
+}
+
+.label,
+.label * {
+  pointer-events: none;
+}
+
+.pulse {
+  animation: pulse 1.6s ease-out infinite;
+}
+
+@keyframes pulse {
+  0% {
+    opacity: 0.9;
+    stroke-width: 2px;
+  }
+  100% {
+    opacity: 0;
+    stroke-width: 14px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .pulse {
+    animation: none;
+    opacity: 0;
+  }
+
+  .group {
+    transition: none;
+  }
+}

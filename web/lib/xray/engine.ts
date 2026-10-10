@@ -63,7 +63,8 @@ export type PlayerAction =
   | { type: "toggle" }
   | { type: "next" }
   | { type: "prev" }
-  | { type: "seek"; index: number }
+  /** `partial`: the seek lands part way through the step, so a finished run is open again. */
+  | { type: "seek"; index: number; partial?: boolean }
   | { type: "tick" }
   | { type: "finish" }
   | { type: "restart" }
@@ -299,11 +300,10 @@ export function playerReducer(state: PlayerState, action: PlayerAction): PlayerS
       });
     case "seek": {
       if (!run) return state;
-      const index = Math.min(lastIndex(state), Math.max(0, action.index));
-      return withRun(state, {
-        index,
-        status: run.status === "done" && index < lastIndex(state) ? "paused" : run.status,
-      });
+      const last = lastIndex(state);
+      const index = Math.min(last, Math.max(0, action.index));
+      const reopened = run.status === "done" && (index < last || action.partial === true);
+      return withRun(state, { index, status: reopened ? "paused" : run.status });
     }
     case "tick": {
       if (!run || run.status !== "playing") return state;

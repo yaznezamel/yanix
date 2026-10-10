@@ -1,5 +1,7 @@
 "use client";
 
+import type { MotionValue } from "motion/react";
+import { useEffect, useRef, useState } from "react";
 import type { RunStatus, Speed } from "@/lib/xray/engine";
 import { NODES } from "@/lib/xray/nodes";
 import type { Phase, Step } from "@/lib/xray/types";
@@ -10,8 +12,13 @@ interface PlaybackBarProps {
   index: number;
   status: RunStatus | null;
   speed: Speed;
+  /** How far through the current step the shared playhead is, from 0 to 1. */
+  fraction: MotionValue<number>;
   onAction: (action: "toggle" | "next" | "prev" | "restart" | "finish") => void;
-  onSeek: (index: number) => void;
+  /** Move the playhead to a step and a point within it. */
+  onSeek: (index: number, fraction: number) => void;
+  /** Dragging the timeline pauses playback until you let go. */
+  onScrub: (scrubbing: boolean) => void;
   onSpeed: (speed: Speed) => void;
 }
 
@@ -69,8 +76,10 @@ export function PlaybackBar({
   index,
   status,
   speed,
+  fraction,
   onAction,
   onSeek,
+  onScrub,
   onSpeed,
 }: PlaybackBarProps) {
   const idle = status === null;
@@ -156,32 +165,170 @@ export function PlaybackBar({
                 </div>
               ))}
             </div>
-            <div className="flex gap-[3px]" role="group" aria-label="Steps">
-              {steps.map((step, i) => {
-                const layer = NODES[step.path[0]!].layer;
-                const state = i < index ? "done" : i === index ? "current" : "todo";
-                return (
-                  <button
-                    key={step.id}
-                    type="button"
-                    onClick={() => onSeek(i)}
-                    title={`${i + 1}. ${step.title}`}
-                    aria-label={`Step ${i + 1}: ${step.title}`}
-                    aria-current={state === "current" ? "step" : undefined}
-                    className="h-3 min-w-[6px] flex-1 rounded-[3px] transition"
-                    style={{
-                      background: LAYER_HEX[layer],
-                      opacity: state === "todo" ? 0.22 : state === "done" ? 0.6 : 1,
-                      outline: state === "current" ? "2px solid var(--color-signal)" : undefined,
-                      outlineOffset: 1,
-                    }}
-                  />
-                );
-              })}
-            </div>
+            <Timeline
+              steps={steps}
+              index={index}
+              fraction={fraction}
+              onSeek={onSeek}
+              onScrub={onScrub}
+              onAction={onAction}
+            />
           </div>
         )}
       </div>
+    </div>
+  );
+}
+
+/** Gap between step segments, in pixels. */
+const GAP = 3;
+
+/**
+ * The trace as a scrubbable timeline, like a video's: one segment per step,
+ * coloured by the layer it starts in, and a playhead that moves through each
+ * step. Click or drag anywhere to jump there; arrow keys step.
+ */
+function Timeline({
+  steps,
+  index,
+  fraction,
+  onSeek,
+  onScrub,
+  onAction,
+}: {
+  steps: Step[];
+  index: number;
+  fraction: MotionValue<number>;
+  onSeek: (index: number, fraction: number) => void;
+  onScrub: (scrubbing: boolean) => void;
+  onAction: (action: "next" | "prev" | "finish") => void;
+}) {
+  const trackRef = useRef<HTMLDivElement>(null);
+  const headRef = useRef<HTMLDivElement>(null);
+  const dragging = useRef(false);
+  const [hover, setHover] = useState<{ index: number; x: number; width: number } | null>(null);
+  const count = steps.length;
+  const current = steps[index];
+
+  // Follow the shared playhead without re-rendering React on every frame.
+  useEffect(() => {
+    const place = (f: number) => {
+      const head = headRef.current;
+      if (!head) return;
+      const at = (index + Math.min(1, Math.max(0, f))) / count;
+      head.style.left = `calc((100% - ${(count - 1) * GAP}px) * ${at} + ${index * GAP}px)`;
+    };
+    place(fraction.get());
+    return fraction.on("change", place);
+  }, [fraction, index, count]);
+
+  function positionAt(clientX: number): { index: number; fraction: number; x: number; width: number } {
+    const rect = trackRef.current!.getBoundingClientRect();
+    const x = Math.min(rect.width, Math.max(0, clientX - rect.left));
+    const segment = (rect.width - (count - 1) * GAP) / count;
+    const i = Math.min(count - 1, Math.floor(x / (segment + GAP)));
+    const within = (x - i * (segment + GAP)) / segment;
+    return { index: i, fraction: Math.min(1, Math.max(0, within)), x, width: rect.width };
+  }
+
+  function onPointerDown(e: React.PointerEvent<HTMLDivElement>) {
+    if (e.pointerType === "mouse" && e.button !== 0) return;
+    e.currentTarget.setPointerCapture(e.pointerId);
+    dragging.current = true;
+    onScrub(true);
+    const at = positionAt(e.clientX);
+    onSeek(at.index, at.fraction);
+  }
+
+  function onPointerMove(e: React.PointerEvent<HTMLDivElement>) {
+    const at = positionAt(e.clientX);
+    if (dragging.current) onSeek(at.index, at.fraction);
+    setHover((h) =>
+      h && h.index === at.index && Math.abs(h.x - at.x) < 1 ? h : { index: at.index, x: at.x, width: at.width },
+    );
+  }
+
+  function onPointerUp() {
+    if (!dragging.current) return;
+    dragging.current = false;
+    onScrub(false);
+  }
+
+  function onKeyDown(e: React.KeyboardEvent<HTMLDivElement>) {
+    switch (e.key) {
+      case "ArrowLeft":
+      case "ArrowDown":
+        onAction("prev");
+        break;
+      case "ArrowRight":
+      case "ArrowUp":
+        onAction("next");
+        break;
+      case "Home":
+        onSeek(0, 0);
+        break;
+      case "End":
+        onAction("finish");
+        break;
+      default:
+        return;
+    }
+    e.preventDefault();
+  }
+
+  const tip = hover ? steps[hover.index] : undefined;
+
+  return (
+    <div className="relative">
+      <div
+        ref={trackRef}
+        role="slider"
+        tabIndex={0}
+        aria-label="Timeline"
+        aria-valuemin={1}
+        aria-valuemax={count}
+        aria-valuenow={index + 1}
+        aria-valuetext={current ? `Step ${index + 1} of ${count}: ${current.title}` : undefined}
+        onPointerDown={onPointerDown}
+        onPointerMove={onPointerMove}
+        onPointerUp={onPointerUp}
+        onPointerCancel={onPointerUp}
+        onPointerLeave={() => setHover(null)}
+        onKeyDown={onKeyDown}
+        className="relative flex h-5 cursor-pointer touch-none items-center rounded outline-none focus-visible:ring-2 focus-visible:ring-signal"
+        style={{ gap: GAP }}
+      >
+        {steps.map((step, i) => {
+          const layer = NODES[step.path[0]!].layer;
+          const state = i < index ? "done" : i === index ? "current" : "todo";
+          return (
+            <div
+              key={step.id}
+              aria-hidden
+              className="h-3 min-w-[4px] flex-1 rounded-[3px]"
+              style={{
+                background: LAYER_HEX[layer],
+                opacity: state === "todo" ? 0.22 : state === "done" ? 0.6 : 1,
+              }}
+            />
+          );
+        })}
+        <div
+          ref={headRef}
+          aria-hidden
+          className="pointer-events-none absolute top-0 bottom-0 w-0.5 -translate-x-1/2 rounded bg-white shadow-[0_0_6px_rgba(255,255,255,0.8)]"
+        >
+          <div className="absolute -top-1 left-1/2 size-2.5 -translate-x-1/2 rounded-full bg-white" />
+        </div>
+      </div>
+      {tip && hover && (
+        <div
+          className="pointer-events-none absolute bottom-full mb-2 max-w-[260px] -translate-x-1/2 truncate rounded-md border border-lab-line bg-lab-panel2 px-2 py-1 text-[11.5px] text-lab-ink shadow-lg"
+          style={{ left: Math.max(Math.min(hover.x, hover.width - 80), Math.min(80, hover.width / 2)) }}
+        >
+          <span className="font-mono text-lab-muted">{hover.index + 1}.</span> {tip.title}
+        </div>
+      )}
     </div>
   );
 }

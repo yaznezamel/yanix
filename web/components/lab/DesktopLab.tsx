@@ -2,19 +2,20 @@
 
 import { MotionConfig, useReducedMotion } from "motion/react";
 import Link from "next/link";
-import { useCallback, useEffect, useMemo, useReducer, useState } from "react";
+import { useEffect, useMemo, useReducer, useRef, useState } from "react";
 import { Desktop } from "@/components/desktop/Desktop";
 import { VirtualScreen } from "@/components/desktop/VirtualScreen";
+import { HardwareView } from "@/components/hardware/HardwareView";
 import {
   INITIAL_PLAYER,
   currentApps,
   fieldLocked,
   machineAt,
   playerReducer,
-  stepMs,
   visibleSteps,
   type PlayerAction,
 } from "@/lib/xray/engine";
+import { buildPath } from "@/lib/xray/geometry";
 import { framesAround } from "@/lib/xray/packets";
 import type { AppId, Detail, MachineState, NodeId, ScenarioRequest, TermLine } from "@/lib/xray/types";
 import { Narration } from "./Narration";
@@ -23,8 +24,17 @@ import { PlaybackBar } from "./PlaybackBar";
 import { XRayMap } from "./XRayMap";
 import styles from "./lab.module.css";
 import { LAYER_HEX, LAYER_NAME } from "./palette";
+import { usePlayhead } from "./usePlayhead";
 
 type LayoutMode = "screen" | "split" | "machine";
+
+/** The two ways to look inside: the software path a trace takes, or the hardware it runs on. */
+type MachineTab = "software" | "hardware";
+
+const MACHINE_TABS: { value: MachineTab; label: string }[] = [
+  { value: "software", label: "Software path" },
+  { value: "hardware", label: "Hardware" },
+];
 
 const LEFT_BASIS: Record<LayoutMode, string> = {
   screen: "60%",
@@ -120,7 +130,8 @@ export function DesktopLab() {
   const [state, dispatch] = useReducer(playerReducer, INITIAL_PLAYER);
   const [layoutOverride, setLayoutOverride] = useState<LayoutMode | null>(null);
   const [selected, setSelected] = useState<NodeId | null>(null);
-  const [reach, setReach] = useState<{ key: string; index: number }>({ key: "", index: 0 });
+  const [tab, setTab] = useState<MachineTab>("software");
+  const resumeAfterScrub = useRef(false);
 
   const run = state.run;
   const scenario = run?.scenario ?? null;
@@ -131,7 +142,18 @@ export function DesktopLab() {
   const step = run ? (steps[run.index] ?? null) : null;
   const status = run?.status ?? null;
   const stepKey = run && step ? `${run.seq}:${run.replay}:${step.id}` : "idle";
-  const reached = reach.key === stepKey ? reach.index : 0;
+  const geometry = useMemo(() => (step ? buildPath(step.path) : null), [step]);
+  const playhead = usePlayhead({
+    step,
+    stepKey,
+    index: run?.index ?? 0,
+    status,
+    speed: state.speed,
+    reduced,
+    nodeAt: geometry?.nodeAt ?? null,
+    dispatch,
+  });
+  const reached = playhead.reached;
   const apps = currentApps(state);
   const machine = machineAt(state);
   const scenarioNodes = useMemo(
@@ -142,16 +164,11 @@ export function DesktopLab() {
   const autoLayout: LayoutMode = !run ? "screen" : status === "done" ? "split" : run.scenario.focus;
   const layout = layoutOverride ?? autoLayout;
 
-  // Advance to the next step when this one has had its travel and reading time.
-  useEffect(() => {
-    if (!step || status !== "playing") return;
-    const timer = setTimeout(() => dispatch({ type: "tick" }), stepMs(step, state.speed));
-    return () => clearTimeout(timer);
-  }, [step, stepKey, status, state.speed]);
-
-  // Keyboard: space plays or pauses, arrows step, unless you are typing.
+  // Keyboard: space plays or pauses, arrows step, unless you are typing or a
+  // control already used the key (the hardware view pans with the arrows).
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
+      if (e.defaultPrevented) return;
       const target = e.target as HTMLElement | null;
       if (
         target instanceof HTMLInputElement ||
@@ -171,10 +188,6 @@ export function DesktopLab() {
     }
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, []);
-
-  const handleReach = useCallback((key: string, index: number) => {
-    setReach({ key, index });
   }, []);
 
   function start(action: PlayerAction) {
@@ -199,6 +212,17 @@ export function DesktopLab() {
 
   function request(req: ScenarioRequest) {
     start({ type: "start", request: req });
+  }
+
+  /** Dragging the timeline pauses the trace, and lets it play on when you let go. */
+  function handleScrub(scrubbing: boolean) {
+    if (scrubbing) {
+      resumeAfterScrub.current = status === "playing";
+      if (resumeAfterScrub.current) dispatch({ type: "pause" });
+    } else if (resumeAfterScrub.current) {
+      resumeAfterScrub.current = false;
+      dispatch({ type: "play" });
+    }
   }
 
   /** The first key typed into a field is traced, unless another trace is still going. */
@@ -342,39 +366,81 @@ export function DesktopLab() {
             </div>
           </div>
 
-          <div className="relative min-h-[460px] min-w-0 flex-1 overflow-hidden rounded-xl border border-lab-line bg-lab-panel">
+          <div className="relative min-h-[540px] min-w-0 flex-1 overflow-hidden rounded-xl border border-lab-line bg-lab-panel">
             <div className="pointer-events-none absolute inset-x-3 top-2 z-10 flex flex-wrap items-center justify-between gap-2">
-              <span className="font-mono text-[10.5px] uppercase tracking-[0.14em] text-lab-muted">
-                Inside the machine
-              </span>
-              <span className="hidden flex-wrap items-center gap-3 text-[11px] text-lab-muted sm:flex">
-                {(["user", "kernel", "hardware", "network"] as const).map((layer) => (
-                  <span key={layer} className="flex items-center gap-1.5">
-                    <span className="size-2 rounded-sm" style={{ background: LAYER_HEX[layer] }} />
-                    {LAYER_NAME[layer]}
-                  </span>
+              <div
+                role="tablist"
+                aria-label="Look inside the machine"
+                className="pointer-events-auto flex items-center gap-0.5 rounded-md border border-lab-line bg-lab-panel2 p-0.5"
+                onKeyDown={(e) => {
+                  if (e.key !== "ArrowLeft" && e.key !== "ArrowRight") return;
+                  e.preventDefault();
+                  const next = tab === "software" ? "hardware" : "software";
+                  setTab(next);
+                  document.getElementById(`machine-tab-${next}`)?.focus();
+                }}
+              >
+                {MACHINE_TABS.map((t) => (
+                  <button
+                    key={t.value}
+                    id={`machine-tab-${t.value}`}
+                    type="button"
+                    role="tab"
+                    aria-selected={tab === t.value}
+                    aria-controls={`machine-panel-${t.value}`}
+                    tabIndex={tab === t.value ? 0 : -1}
+                    onClick={() => setTab(t.value)}
+                    className={`rounded px-2.5 py-1 text-[12px] transition ${
+                      tab === t.value ? "bg-white/10 text-lab-ink" : "text-lab-muted hover:text-lab-ink"
+                    }`}
+                  >
+                    {t.label}
+                  </button>
                 ))}
-                <span className="flex items-center gap-1.5">
-                  <span className="h-0.5 w-4 rounded bg-signal shadow-[0_0_6px_var(--color-signal)]" />
-                  Signal
+              </div>
+              {tab === "software" && (
+                <span className="hidden flex-wrap items-center gap-3 text-[11px] text-lab-muted sm:flex">
+                  {(["user", "kernel", "hardware", "network"] as const).map((layer) => (
+                    <span key={layer} className="flex items-center gap-1.5">
+                      <span className="size-2 rounded-sm" style={{ background: LAYER_HEX[layer] }} />
+                      {LAYER_NAME[layer]}
+                    </span>
+                  ))}
+                  <span className="flex items-center gap-1.5">
+                    <span className="h-0.5 w-4 rounded bg-signal shadow-[0_0_6px_var(--color-signal)]" />
+                    Signal
+                  </span>
                 </span>
-              </span>
+              )}
             </div>
-            <div className="h-full overflow-x-auto xl:overflow-hidden">
-              <div className="h-full min-w-[680px] p-2 pt-7 xl:min-w-0">
+            <div
+              id="machine-panel-software"
+              role="tabpanel"
+              aria-labelledby="machine-tab-software"
+              inert={tab !== "software"}
+              className={`absolute inset-0 overflow-x-auto xl:overflow-hidden ${tab === "software" ? "" : "invisible"}`}
+            >
+              <div className="h-full min-w-[680px] p-2 pt-10 xl:min-w-0">
                 <XRayMap
                   step={step}
                   stepKey={stepKey}
+                  geometry={geometry}
+                  progress={playhead.progress}
                   reached={reached}
-                  playing={status === "playing"}
-                  speed={state.speed}
-                  reduced={reduced}
                   selected={selected}
                   scenarioNodes={scenarioNodes}
                   onSelect={setSelected}
-                  onReach={handleReach}
                 />
               </div>
+            </div>
+            <div
+              id="machine-panel-hardware"
+              role="tabpanel"
+              aria-labelledby="machine-tab-hardware"
+              inert={tab !== "hardware"}
+              className={`absolute inset-0 ${tab === "hardware" ? "" : "invisible"}`}
+            >
+              <HardwareView step={step} reached={reached} reduced={reduced} />
             </div>
           </div>
         </main>
@@ -385,8 +451,10 @@ export function DesktopLab() {
             index={run?.index ?? 0}
             status={status}
             speed={state.speed}
+            fraction={playhead.fraction}
             onAction={(type) => dispatch({ type })}
-            onSeek={(index) => dispatch({ type: "seek", index })}
+            onSeek={playhead.seek}
+            onScrub={handleScrub}
             onSpeed={(speed) => dispatch({ type: "speed", speed })}
           />
         </footer>
