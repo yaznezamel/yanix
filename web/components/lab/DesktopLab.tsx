@@ -8,6 +8,7 @@ import { VirtualScreen } from "@/components/desktop/VirtualScreen";
 import {
   INITIAL_PLAYER,
   currentApps,
+  fieldLocked,
   machineAt,
   playerReducer,
   stepMs,
@@ -15,7 +16,7 @@ import {
   type PlayerAction,
 } from "@/lib/xray/engine";
 import { framesAround } from "@/lib/xray/packets";
-import type { AppId, Detail, MachineState, NodeId, TermLine } from "@/lib/xray/types";
+import type { AppId, Detail, MachineState, NodeId, ScenarioRequest, TermLine } from "@/lib/xray/types";
 import { Narration } from "./Narration";
 import { PacketPanel } from "./PacketPanel";
 import { PlaybackBar } from "./PlaybackBar";
@@ -38,12 +39,25 @@ const PANELS_RESERVE: Record<LayoutMode, string> = {
   machine: "382px",
 };
 
-const CACHE_LABELS: { key: keyof MachineState; label: string; hint: string }[] = [
-  { key: "arpCached", label: "ARP", hint: "The router's MAC address is in the neighbour table" },
-  { key: "dnsCached", label: "DNS", hint: "The router and resolver cache www.example.com" },
-  { key: "connectionOpen", label: "TLS conn", hint: "Chromium keeps an HTTPS connection open" },
-  { key: "fileCached", label: "Page cache", hint: "notes.txt is in RAM" },
-];
+function cacheChips(m: MachineState): { label: string; state: string; warm: boolean; hint: string }[] {
+  const files = m.pageCache.length;
+  return [
+    { label: "ARP", warm: m.arpCached, state: m.arpCached ? "warm" : "cold", hint: "The router's MAC address is in the neighbour table" },
+    { label: "DNS", warm: m.dnsCached, state: m.dnsCached ? "warm" : "cold", hint: "The router and resolver cache www.example.com" },
+    {
+      label: "TLS conn",
+      warm: m.connectionOpen,
+      state: m.connectionOpen ? "open" : "closed",
+      hint: "Chromium keeps an HTTPS connection open",
+    },
+    {
+      label: "Page cache",
+      warm: files > 0,
+      state: files === 0 ? "cold" : files === 1 ? "1 file" : `${files} files`,
+      hint: files === 0 ? "No file or program of yours is in RAM yet" : `In RAM: ${m.pageCache.join(", ")}`,
+    },
+  ];
+}
 
 function Segmented<T extends string>({
   label,
@@ -86,7 +100,7 @@ function terminalReply(command: string): TermLine[] {
         echo,
         { kind: "output", text: "Traced: cat notes.txt   read a file through VFS, the page cache and the SSD" },
         { kind: "output", text: "Also:   ls · clear · help" },
-        { kind: "hint", text: "Searches in Chromium trace the network path." },
+        { kind: "hint", text: "Other apps trace too: search in Chromium, open notes.txt in the Text Editor, play a sound in Videos." },
       ];
     case "ls":
       return [echo, { kind: "output", text: "notes.txt" }];
@@ -175,7 +189,7 @@ export function DesktopLab() {
   function handleCommand(raw: string) {
     const command = raw.trim().replace(/\s+/g, " ");
     if (command === "cat notes.txt") {
-      start({ type: "start", request: { kind: "readFile" } });
+      request({ kind: "readFile" });
     } else if (command === "clear") {
       dispatch({ type: "terminal", clear: true });
     } else {
@@ -183,7 +197,30 @@ export function DesktopLab() {
     }
   }
 
+  function request(req: ScenarioRequest) {
+    start({ type: "start", request: req });
+  }
+
+  /** The first key typed into a field is traced, unless another trace is still going. */
+  function handleKeystroke(app: "browser" | "editor", key: string) {
+    if (run && status !== "done") return;
+    dispatch({ type: "start", request: { kind: "keystroke", app, key } });
+  }
+
+  function handlePaste(app: "browser" | "editor") {
+    const clip = apps.clipboard;
+    if (!clip) return;
+    // Pasting into the app that owns the clipboard needs no round trip: it has the text.
+    if (clip.owner === app) {
+      if (app === "browser") dispatch({ type: "draft", text: apps.browser.draft + clip.text });
+      else dispatch({ type: "editorText", text: apps.editor.text + clip.text });
+      return;
+    }
+    request({ kind: "paste", app, source: clip.owner, text: clip.text });
+  }
+
   const tracing: AppId | null = run && status !== "done" ? run.scenario.app : null;
+  const active = run !== null && status !== "done";
   const { current: packet, previous: previousPacket } = framesAround(step?.frames, reached);
   const nextStep = run ? (steps[run.index + 1] ?? null) : null;
   const panelClass = `min-h-[200px] overflow-hidden rounded-xl border border-lab-line bg-lab-panel ${
@@ -220,19 +257,17 @@ export function DesktopLab() {
                 { value: "deep", label: "Deep dive" },
               ]}
             />
-            <div className="flex items-center gap-1.5 rounded-md border border-lab-line bg-lab-panel2 px-2 py-1">
+            <div className="flex flex-wrap items-center gap-1.5 rounded-md border border-lab-line bg-lab-panel2 px-2 py-1">
               <span className="font-mono text-[10.5px] uppercase tracking-[0.1em] text-lab-muted">Caches</span>
-              {CACHE_LABELS.map((c) => (
+              {cacheChips(machine).map((c) => (
                 <span
-                  key={c.key}
+                  key={c.label}
                   title={c.hint}
-                  className={`rounded px-1.5 py-0.5 font-mono text-[10.5px] ${
-                    machine[c.key]
-                      ? "bg-[#7ee0a1]/15 text-[#7ee0a1]"
-                      : "bg-white/5 text-lab-muted"
+                  className={`whitespace-nowrap rounded px-1.5 py-0.5 font-mono text-[10.5px] ${
+                    c.warm ? "bg-[#7ee0a1]/15 text-[#7ee0a1]" : "bg-white/5 text-lab-muted"
                   }`}
                 >
-                  {c.label} {machine[c.key] ? "warm" : "cold"}
+                  {c.label} {c.state}
                 </span>
               ))}
               <button
@@ -260,10 +295,27 @@ export function DesktopLab() {
                 <Desktop
                   apps={apps}
                   tracing={tracing}
-                  onLaunch={(app) => start({ type: "start", request: { kind: "launch", app } })}
+                  locked={{
+                    draft: fieldLocked(state, "draft"),
+                    editor: fieldLocked(state, "editor"),
+                    player: fieldLocked(state, "player"),
+                  }}
+                  restarting={run?.scenario.kind === "restart"}
+                  loggingIn={active && run?.scenario.kind === "login"}
+                  onLaunch={(app) => request({ kind: "launch", app })}
                   onClose={(app) => dispatch({ type: "closeApp", app })}
-                  onSearch={(query) => start({ type: "start", request: { kind: "search", query } })}
+                  onWelcome={(open) => dispatch({ type: "window", id: "welcome", status: open ? "open" : "closed" })}
+                  onSearch={(query) => request({ kind: "search", query })}
+                  onDraft={(text) => dispatch({ type: "draft", text })}
                   onCommand={handleCommand}
+                  onOpenFile={() => request({ kind: "openFile" })}
+                  onEditorText={(text) => dispatch({ type: "editorText", text })}
+                  onKeystroke={handleKeystroke}
+                  onCopy={(app, text) => request({ kind: "copy", app, text })}
+                  onPaste={handlePaste}
+                  onPlay={(media) => request({ kind: "play", media })}
+                  onPause={() => dispatch({ type: "media", patch: { playing: false } })}
+                  onPower={(kind) => request({ kind })}
                 />
               </VirtualScreen>
             </div>

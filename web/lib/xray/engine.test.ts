@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   INITIAL_PLAYER,
   appsAt,
+  fieldLocked,
   currentApps,
   currentStep,
   machineAt,
@@ -13,7 +14,8 @@ import {
   type PlayerAction,
   type PlayerState,
 } from "./engine";
-import { buildScenario, COLD_MACHINE } from "./scenarios";
+import { APPS, COLD_MACHINE, NOTES_FILE } from "./apps";
+import { buildScenario } from "./scenarios";
 
 function run(actions: PlayerAction[], from: PlayerState = INITIAL_PLAYER): PlayerState {
   return actions.reduce(playerReducer, from);
@@ -79,7 +81,7 @@ describe("playerReducer", () => {
       arpCached: true,
       dnsCached: true,
       connectionOpen: true,
-      fileCached: false,
+      pageCache: [],
     });
     const second = playerReducer(first, search);
     const phases = new Set(second.run!.scenario.steps.map((s) => s.phase));
@@ -176,5 +178,130 @@ describe("timing", () => {
     expect(travelMs(single, 1)).toBe(0);
     expect(travelMs(long, 1)).toBeGreaterThan(1000);
     expect(stepMs(long, 2)).toBeCloseTo(stepMs(long, 1) / 2);
+  });
+});
+
+describe("windows", () => {
+  const launch: PlayerAction = { type: "start", request: { kind: "launch", app: "editor" } };
+
+  it("opens the window only when the app draws its first frame", () => {
+    const state = run([launch]);
+    expect(currentApps(state).windows.editor).toBe("starting");
+    const steps = visibleSteps(state.run!.scenario, state.detail);
+    const draw = steps.findIndex((s) => s.id === "draw");
+    expect(currentApps(playerReducer(state, { type: "seek", index: draw - 1 })).windows.editor).toBe("starting");
+    expect(currentApps(playerReducer(state, { type: "seek", index: draw })).windows.editor).toBe("open");
+  });
+
+  it("does not launch an app twice", () => {
+    const once = run([launch, { type: "finish" }]);
+    expect(playerReducer(once, launch)).toBe(once);
+  });
+
+  it("forgets the clipboard when the app that owns it closes", () => {
+    const copied = run([
+      launch,
+      { type: "finish" },
+      { type: "start", request: { kind: "copy", app: "editor", text: "hello" } },
+      { type: "finish" },
+    ]);
+    expect(currentApps(copied).clipboard).toEqual({ owner: "editor", text: "hello" });
+    const closed = playerReducer(copied, { type: "closeApp", app: "editor" });
+    expect(currentApps(closed).clipboard).toBeNull();
+    expect(currentApps(closed).windows.editor).toBe("closed");
+  });
+});
+
+describe("clipboard", () => {
+  it("records the owner at set_selection, not when you press Ctrl+C", () => {
+    const state = run([{ type: "start", request: { kind: "copy", app: "editor", text: "abc" } }]);
+    const steps = visibleSteps(state.run!.scenario, state.detail);
+    const owner = steps.findIndex((s) => s.id === "owner");
+    expect(currentApps(playerReducer(state, { type: "seek", index: owner - 1 })).clipboard).toBeNull();
+    expect(currentApps(playerReducer(state, { type: "seek", index: owner })).clipboard?.text).toBe("abc");
+  });
+
+  it("pastes into the search box when the text reaches the screen", () => {
+    const start = run([{ type: "draft", text: "linux " }, { type: "start", request: { kind: "paste", app: "browser", source: "editor", text: "page cache" } }]);
+    const steps = visibleSteps(start.run!.scenario, start.detail);
+    const show = steps.findIndex((s) => s.id === "show");
+    expect(currentApps(playerReducer(start, { type: "seek", index: show - 1 })).browser.draft).toBe("linux ");
+    expect(currentApps(playerReducer(start, { type: "seek", index: show })).browser.draft).toBe("linux page cache");
+  });
+});
+
+describe("user edits during traces", () => {
+  const open: PlayerAction = { type: "start", request: { kind: "openFile" } };
+
+  it("locks the document while a trace is about to change it", () => {
+    const state = run([open]);
+    expect(fieldLocked(state, "editor")).toBe(true);
+    expect(playerReducer(state, { type: "editorText", text: "typed" })).toBe(state);
+  });
+
+  it("commits a finished trace before applying an edit, so the edit sticks", () => {
+    const done = run([open, { type: "finish" }]);
+    expect(fieldLocked(done, "editor")).toBe(false);
+    const edited = playerReducer(done, { type: "editorText", text: "my notes" });
+    expect(edited.run).toBeNull();
+    expect(currentApps(edited).editor).toMatchObject({ file: NOTES_FILE, text: "my notes" });
+  });
+
+  it("keeps typing in the base when the trace doesn't touch that field", () => {
+    const typing = run([{ type: "start", request: { kind: "keystroke", app: "browser", key: "h" } }]);
+    expect(fieldLocked(typing, "draft")).toBe(false);
+    const next = playerReducer(typing, { type: "draft", text: "h" });
+    expect(next.run).not.toBeNull();
+    expect(currentApps(next).browser.draft).toBe("h");
+  });
+});
+
+describe("power", () => {
+  it("shuts down: apps close, the screen goes dark and RAM forgets", () => {
+    const warm = run([search, { type: "finish" }, { type: "start", request: { kind: "readFile" } }, { type: "finish" }]);
+    expect(warm.machine.pageCache).toContain(NOTES_FILE);
+    const off = run([{ type: "start", request: { kind: "shutdown" } }, { type: "finish" }], warm);
+    const apps = currentApps(off);
+    expect(apps.screen).toBe("off");
+    expect(Object.values(apps.windows).every((w) => w === "closed")).toBe(true);
+    expect(off.machine).toEqual({ arpCached: false, dnsCached: true, connectionOpen: false, pageCache: [] });
+  });
+
+  it("boots to the login screen, and logging in shows the desktop", () => {
+    const booted = run([{ type: "start", request: { kind: "boot" } }, { type: "finish" }]);
+    expect(currentApps(booted).screen).toBe("login");
+    expect(currentApps(booted).bootLog.length).toBeGreaterThan(5);
+    const desktop = run([{ type: "start", request: { kind: "login" } }, { type: "finish" }], booted);
+    expect(currentApps(desktop).screen).toBe("desktop");
+  });
+
+  it("restarts straight through to the login screen", () => {
+    const restarted = run([{ type: "start", request: { kind: "restart" } }, { type: "finish" }]);
+    expect(currentApps(restarted).screen).toBe("login");
+    const ids = restarted.run!.scenario.steps.map((s) => s.id);
+    expect(ids).toContain("reset");
+    expect(ids).not.toContain("power-button");
+  });
+});
+
+describe("machine state", () => {
+  it("ends every scenario knowing exactly what its steps learned", () => {
+    const requests = [
+      search,
+      { type: "start", request: { kind: "openFile" } },
+      { type: "start", request: { kind: "launch", app: "player" } },
+      { type: "start", request: { kind: "play", media: "video" } },
+      { type: "start", request: { kind: "shutdown" } },
+    ] satisfies PlayerAction[];
+    let state = INITIAL_PLAYER;
+    for (const request of requests) {
+      state = playerReducer(state, request);
+      expect(machineAt(playerReducer(state, { type: "finish" }))).toEqual(state.machine);
+    }
+  });
+
+  it("caches a program's file on its first launch", () => {
+    const state = run([{ type: "start", request: { kind: "launch", app: "editor" } }]);
+    expect(state.machine.pageCache).toEqual([APPS.editor.program]);
   });
 });

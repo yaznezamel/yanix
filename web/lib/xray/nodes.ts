@@ -2,7 +2,8 @@ import type { Layer, MachineNode, NodeId } from "./types";
 
 // The machine map, drawn in a 1000 x 760 coordinate space. Hardware and
 // software are placed by hand so related parts stack: storage on the left,
-// shared kernel services in the middle, networking on the right.
+// shared kernel services in the middle, networking on the right, and the
+// chipset's controllers along the bottom.
 
 export const VIEW = { width: 1000, height: 760 } as const;
 
@@ -23,22 +24,73 @@ export const BANDS: Band[] = [
 ];
 
 const NODE_LIST: MachineNode[] = [
-  // User space
+  // User space, top row
   {
     id: "shell",
     label: "Desktop shell",
     sub: "compositor",
     layer: "user",
-    x: 16, y: 40, w: 170, h: 46,
+    x: 16, y: 40, w: 120, h: 46,
     about:
-      "The desktop shell draws the taskbar and windows. Its compositor reads input events from the kernel, decides which window receives them, and combines all windows into the picture on screen.",
+      "The desktop shell draws the taskbar and windows. On Wayland it is also the display server (the compositor): it reads input from the kernel, decides which window receives it, brokers the clipboard between apps, and combines every window into the picture on screen.",
+    code: [
+      { project: "mutter", path: "src/wayland/meta-wayland-keyboard.c" },
+      { project: "mutter", path: "src/wayland/meta-wayland-data-device.c" },
+    ],
   },
+  {
+    id: "services",
+    label: "System services",
+    sub: "systemd · logind",
+    layer: "user",
+    x: 144, y: 40, w: 140, h: 46,
+    about:
+      "Background programs that run the system. systemd is process 1: it starts every other service and stops them at shutdown. logind tracks user sessions and handles power-off requests; udev reacts to devices; the network manager gets an IP address with DHCP.",
+    code: [
+      { project: "systemd", path: "src/core/main.c" },
+      { project: "systemd", path: "src/login/logind-dbus.c" },
+    ],
+  },
+  {
+    id: "player",
+    label: "Media player",
+    sub: "Videos · GStreamer",
+    layer: "user",
+    x: 292, y: 40, w: 144, h: 46,
+    about:
+      "A media player reads a compressed audio or video file, decodes it into raw samples and frames on the CPU (or the GPU for video), and hands them on: sound to PipeWire, pictures to the compositor.",
+  },
+  {
+    id: "browser",
+    label: "Browser",
+    sub: "Chromium · UI",
+    layer: "user",
+    x: 444, y: 40, w: 128, h: 46,
+    about:
+      "Chromium's browser process runs the window, tabs and omnibox and coordinates the other processes. It never parses web pages itself: that work happens in separate, sandboxed processes.",
+    code: [
+      { project: "chromium", path: "chrome/browser/" },
+      { project: "chromium", path: "ui/ozone/platform/wayland/host/wayland_keyboard.cc" },
+    ],
+  },
+  {
+    id: "renderer",
+    label: "Renderer",
+    sub: "HTML → pixels",
+    layer: "user",
+    x: 580, y: 40, w: 128, h: 46,
+    about:
+      "A renderer process turns HTML, CSS and JavaScript into pixels. It runs in a sandbox with almost no direct access to the system, and asks other processes for network data and drawing.",
+    code: [{ project: "chromium", path: "content/renderer/" }],
+  },
+
+  // User space, bottom row
   {
     id: "terminal",
     label: "Terminal",
     sub: "emulator",
     layer: "user",
-    x: 16, y: 106, w: 104, h: 46,
+    x: 16, y: 106, w: 80, h: 46,
     about:
       "A terminal emulator is an ordinary program that stands in for a hardware terminal. It owns one end of a pseudo-terminal; the shell running inside it owns the other end.",
     code: [{ project: "linux", path: "drivers/tty/pty.c" }],
@@ -48,7 +100,7 @@ const NODE_LIST: MachineNode[] = [
     label: "bash",
     sub: "shell",
     layer: "user",
-    x: 128, y: 106, w: 74, h: 46,
+    x: 104, y: 106, w: 56, h: 46,
     about:
       "The shell reads your command line, starts programs with clone() and execve(), and waits for them to finish.",
     code: [{ project: "bash", path: "execute_cmd.c" }],
@@ -58,37 +110,43 @@ const NODE_LIST: MachineNode[] = [
     label: "cat",
     sub: "coreutils",
     layer: "user",
-    x: 210, y: 106, w: 74, h: 46,
+    x: 168, y: 106, w: 64, h: 46,
     about:
       "cat opens a file, read()s it into a buffer and write()s the bytes to its standard output, which here is the terminal.",
     code: [{ project: "coreutils", path: "src/cat.c" }],
   },
   {
-    id: "browser",
-    label: "Browser",
-    sub: "Chromium · UI",
+    id: "editor",
+    label: "Text editor",
+    sub: "GTK app",
     layer: "user",
-    x: 380, y: 40, w: 156, h: 46,
+    x: 240, y: 106, w: 92, h: 46,
     about:
-      "Chromium's browser process runs the window, tabs and omnibox and coordinates the other processes. It never parses web pages itself: that work happens in separate, sandboxed processes.",
-    code: [{ project: "chromium", path: "chrome/browser/" }],
+      "A GTK text editor. Like every graphical app on Wayland it talks to the compositor over a Unix socket: it receives key and pointer events, offers and receives clipboard data, and hands over finished frames.",
+    code: [
+      { project: "gtk", path: "gdk/wayland/gdkseat-wayland.c" },
+      { project: "gtk", path: "gdk/wayland/gdkclipboard-wayland.c" },
+    ],
   },
   {
-    id: "renderer",
-    label: "Renderer",
-    sub: "HTML → pixels",
+    id: "pipewire",
+    label: "PipeWire",
+    sub: "audio server",
     layer: "user",
-    x: 544, y: 40, w: 164, h: 46,
+    x: 340, y: 106, w: 96, h: 46,
     about:
-      "A renderer process turns HTML, CSS and JavaScript into pixels. It runs in a sandbox with almost no direct access to the system, and asks other processes for network data and drawing.",
-    code: [{ project: "chromium", path: "content/renderer/" }],
+      "PipeWire routes and mixes audio between apps and devices. Its real-time data thread wakes on a timer once per quantum, mixes every stream and writes the result into the sound card's buffer before the hardware needs it.",
+    code: [
+      { project: "pipewire", path: "spa/plugins/alsa/alsa-pcm.c" },
+      { project: "pipewire", path: "src/modules/module-rt.c" },
+    ],
   },
   {
     id: "netsvc",
     label: "Network service",
     sub: "HTTP · TLS",
     layer: "user",
-    x: 380, y: 106, w: 156, h: 46,
+    x: 444, y: 106, w: 128, h: 46,
     about:
       "Chromium's network service makes every network request: it resolves names, opens TCP connections, runs TLS with BoringSSL and speaks HTTP. On desktop Linux it runs in its own process.",
     code: [
@@ -98,14 +156,15 @@ const NODE_LIST: MachineNode[] = [
   },
   {
     id: "glibc",
-    label: "glibc resolver",
-    sub: "getaddrinfo()",
+    label: "glibc",
+    sub: "ld.so · resolver",
     layer: "user",
-    x: 544, y: 106, w: 164, h: 46,
+    x: 580, y: 106, w: 128, h: 46,
     about:
-      "The GNU C library implements getaddrinfo(). Its resolver follows /etc/nsswitch.conf, checks /etc/hosts, reads the DNS server from /etc/resolv.conf and sends queries over UDP. Chromium can also use its own built-in DNS client; both send the same kind of packet.",
+      "The GNU C library is loaded into almost every process. Its dynamic linker, ld.so, maps a program's shared libraries when it starts. Its resolver implements getaddrinfo(): it follows /etc/nsswitch.conf, checks /etc/hosts and sends DNS queries over UDP. Chromium can also use its own DNS client; both send the same kind of packet.",
     code: [
-      { project: "glibc", path: "sysdeps/posix/getaddrinfo.c" },
+      { project: "glibc", path: "elf/rtld.c", symbol: "dl_main" },
+      { project: "glibc", path: "nss/getaddrinfo.c", symbol: "getaddrinfo" },
       { project: "glibc", path: "resolv/res_send.c" },
     ],
   },
@@ -142,8 +201,11 @@ const NODE_LIST: MachineNode[] = [
     layer: "kernel",
     x: 16, y: 296, w: 170, h: 40,
     about:
-      "File contents the kernel keeps in otherwise free RAM. A hit means no disk access at all; a miss sends a read down the storage stack.",
-    code: [{ project: "linux", path: "mm/filemap.c", symbol: "filemap_read" }],
+      "File contents the kernel keeps in otherwise free RAM: documents, but also the programs and libraries you run. A hit means no disk access at all; a miss sends a read down the storage stack.",
+    code: [
+      { project: "linux", path: "mm/filemap.c", symbol: "filemap_read" },
+      { project: "linux", path: "mm/readahead.c", symbol: "page_cache_sync_ra" },
+    ],
   },
   {
     id: "ext4",
@@ -202,10 +264,37 @@ const NODE_LIST: MachineNode[] = [
     layer: "kernel",
     x: 364, y: 244, w: 140, h: 40,
     about:
-      "Memory management maps virtual addresses to physical pages. When a program touches a page that is not mapped yet, the CPU raises a page fault and the kernel fills it in, often from the page cache.",
+      "Memory management gives every process its own virtual address space. It records which ranges are mapped to what (VMAs), fills in page tables, and handles page faults when a program touches a page that is not mapped yet, often from the page cache.",
     code: [
       { project: "linux", path: "mm/memory.c", symbol: "handle_mm_fault" },
-      { project: "linux", path: "mm/filemap.c", symbol: "filemap_fault" },
+      { project: "linux", path: "mm/mmap.c", symbol: "do_mmap" },
+    ],
+  },
+  {
+    id: "sched",
+    label: "Scheduler",
+    sub: "who runs next",
+    layer: "kernel",
+    x: 214, y: 296, w: 140, h: 40,
+    about:
+      "The scheduler decides which task runs on each CPU core and for how long. Tasks waiting for I/O sleep; a wake-up makes them runnable again. Real-time tasks, such as audio threads, run before every normal one.",
+    code: [
+      { project: "linux", path: "kernel/sched/core.c", symbol: "schedule" },
+      { project: "linux", path: "kernel/sched/core.c", symbol: "try_to_wake_up" },
+      { project: "linux", path: "kernel/sched/rt.c" },
+    ],
+  },
+  {
+    id: "ipc",
+    label: "IPC",
+    sub: "Unix sockets · pipes",
+    layer: "kernel",
+    x: 364, y: 296, w: 140, h: 40,
+    about:
+      "Inter-process communication: Unix domain sockets carry Wayland, D-Bus and PipeWire messages between programs on the same machine, and can pass open files along; pipes are one-way byte channels. The kernel copies the bytes and wakes the reader.",
+    code: [
+      { project: "linux", path: "net/unix/af_unix.c" },
+      { project: "linux", path: "fs/pipe.c" },
     ],
   },
   {
@@ -213,7 +302,7 @@ const NODE_LIST: MachineNode[] = [
     label: "TTY",
     sub: "pseudo-terminals",
     layer: "kernel",
-    x: 214, y: 296, w: 140, h: 40,
+    x: 214, y: 348, w: 140, h: 40,
     about:
       "The TTY layer connects terminals to programs. A pseudo-terminal pair (/dev/ptmx and /dev/pts/N) lets a terminal emulator stand in for a real keyboard and screen.",
     code: [
@@ -226,7 +315,7 @@ const NODE_LIST: MachineNode[] = [
     label: "Input",
     sub: "evdev",
     layer: "kernel",
-    x: 364, y: 296, w: 140, h: 40,
+    x: 364, y: 348, w: 140, h: 40,
     about:
       "The input subsystem turns device reports into standard events (key press, button, movement) and exposes them as /dev/input/event* files through evdev.",
     code: [
@@ -235,27 +324,57 @@ const NODE_LIST: MachineNode[] = [
     ],
   },
   {
-    id: "sched",
-    label: "Scheduler",
-    sub: "who runs next",
-    layer: "kernel",
-    x: 214, y: 348, w: 290, h: 40,
-    about:
-      "The scheduler decides which task runs on each CPU core and for how long. Tasks waiting for I/O sleep; a wake-up makes them runnable again.",
-    code: [
-      { project: "linux", path: "kernel/sched/core.c", symbol: "schedule" },
-      { project: "linux", path: "kernel/sched/core.c", symbol: "try_to_wake_up" },
-    ],
-  },
-  {
     id: "drm",
     label: "Graphics (DRM)",
     sub: "GPU driver",
     layer: "kernel",
-    x: 214, y: 400, w: 290, h: 40,
+    x: 214, y: 400, w: 140, h: 40,
     about:
-      "The Direct Rendering Manager is the kernel side of graphics. Programs submit GPU work and display updates through ioctl() calls on /dev/dri/*.",
-    code: [{ project: "linux", path: "drivers/gpu/drm/drm_ioctl.c" }],
+      "The Direct Rendering Manager is the kernel side of graphics. Programs submit GPU work and display updates through ioctl() calls on /dev/dri/*; the compositor uses it to set the display mode and flip to each new frame.",
+    code: [
+      { project: "linux", path: "drivers/gpu/drm/drm_ioctl.c" },
+      { project: "linux", path: "drivers/gpu/drm/drm_atomic_uapi.c", symbol: "drm_mode_atomic_ioctl" },
+    ],
+  },
+  {
+    id: "alsa",
+    label: "Sound (ALSA)",
+    sub: "PCM · HD Audio",
+    layer: "kernel",
+    x: 364, y: 400, w: 140, h: 40,
+    about:
+      "ALSA is the kernel's sound subsystem. A PCM device exposes a ring buffer that the sound card reads with DMA; programs map it into memory and keep it filled ahead of the hardware.",
+    code: [
+      { project: "linux", path: "sound/core/pcm_native.c" },
+      { project: "linux", path: "sound/core/pcm_lib.c", symbol: "snd_pcm_period_elapsed" },
+    ],
+  },
+  {
+    id: "acpi",
+    label: "Power (ACPI)",
+    sub: "power off · reset",
+    layer: "kernel",
+    x: 214, y: 452, w: 140, h: 40,
+    about:
+      "ACPI is how the firmware describes power management to the operating system. To power off, the kernel shuts devices down and writes the sleep state S5 (soft off) into the chipset's power-management register.",
+    code: [
+      { project: "linux", path: "kernel/reboot.c", symbol: "kernel_power_off" },
+      { project: "linux", path: "drivers/acpi/sleep.c", symbol: "acpi_power_off" },
+    ],
+  },
+  {
+    id: "usbdrv",
+    label: "USB · HID",
+    sub: "xHCI · usbhid",
+    layer: "kernel",
+    x: 364, y: 452, w: 140, h: 40,
+    about:
+      "USB drivers: the xHCI driver runs the USB host controller, and the HID drivers understand keyboards and mice, turning their reports into input events.",
+    code: [
+      { project: "linux", path: "drivers/usb/host/xhci-ring.c", symbol: "xhci_irq" },
+      { project: "linux", path: "drivers/hid/usbhid/hid-core.c", symbol: "hid_irq_in" },
+      { project: "linux", path: "drivers/hid/hid-input.c", symbol: "hidinput_hid_event" },
+    ],
   },
   {
     id: "irq",
@@ -364,23 +483,13 @@ const NODE_LIST: MachineNode[] = [
     ],
   },
 
-  // Hardware
-  {
-    id: "inputdev",
-    label: "Keyboard & mouse",
-    sub: "USB",
-    layer: "hardware",
-    x: 16, y: 576, w: 170, h: 40,
-    about:
-      "USB keyboards and mice send small reports. The USB host controller collects them and raises an interrupt when a transfer completes.",
-    code: [{ project: "linux", path: "drivers/hid/usbhid/hid-core.c" }],
-  },
+  // Hardware, top row
   {
     id: "ssd",
     label: "NVMe SSD",
     sub: "flash · DMA",
     layer: "hardware",
-    x: 16, y: 628, w: 170, h: 112,
+    x: 16, y: 582, w: 170, h: 96,
     about:
       "Flash storage with its own controller. It fetches commands from queues in RAM, moves data with DMA and raises an interrupt when a command completes.",
   },
@@ -389,36 +498,93 @@ const NODE_LIST: MachineNode[] = [
     label: "CPU",
     sub: "cores · caches",
     layer: "hardware",
-    x: 206, y: 576, w: 128, h: 164,
+    x: 206, y: 582, w: 128, h: 96,
     about:
-      "Runs every instruction: in user mode for programs and in kernel mode for the kernel. System calls, page faults and interrupts switch it between the two.",
+      "Runs every instruction: in user mode for programs and in kernel mode for the kernel. System calls, page faults and interrupts switch it between the two. Its memory management unit translates every address through page tables.",
   },
   {
     id: "ram",
     label: "RAM",
     sub: "code · page cache · rings",
     layer: "hardware",
-    x: 346, y: 576, w: 166, h: 164,
+    x: 346, y: 582, w: 166, h: 96,
     about:
-      "Holds everything that is running: program code, the page cache, socket buffers, and the descriptor rings that devices read and write with DMA.",
+      "Holds everything that is running: program code, the page cache, socket buffers, and the rings and buffers that devices read and write with DMA. It forgets everything when the power goes off.",
   },
   {
     id: "nic",
     label: "Network card",
     sub: "Ethernet · DMA",
     layer: "hardware",
-    x: 528, y: 576, w: 180, h: 100,
+    x: 528, y: 582, w: 180, h: 96,
     about:
       "The network card moves frames between the cable and RAM with DMA, adds and checks the Ethernet checksum, and raises interrupts when frames arrive.",
+  },
+
+  // Hardware, bottom row: peripherals and the chipset's controllers
+  {
+    id: "inputdev",
+    label: "Keyboard",
+    sub: "mouse · USB",
+    layer: "hardware",
+    x: 16, y: 688, w: 96, h: 48,
+    about:
+      "A USB keyboard has its own small controller that scans the keys and prepares reports. It cannot interrupt the computer: the USB host controller asks it for news at a fixed interval.",
+    code: [{ project: "linux", path: "drivers/hid/usbhid/hid-core.c" }],
+  },
+  {
+    id: "usbhc",
+    label: "USB",
+    sub: "xHCI",
+    layer: "hardware",
+    x: 120, y: 688, w: 70, h: 48,
+    about:
+      "The USB host controller, part of the chipset. It polls devices, moves their data to and from RAM with DMA, and raises an interrupt when a transfer completes.",
+  },
+  {
+    id: "pmc",
+    label: "Power",
+    sub: "ACPI · S5",
+    layer: "hardware",
+    x: 196, y: 688, w: 70, h: 48,
+    about:
+      "The chipset's power management. It watches the power button even when the computer is off, switches the power supply on, and switches it off when the operating system writes the soft-off state.",
+  },
+  {
+    id: "firmware",
+    label: "Firmware",
+    sub: "UEFI flash",
+    layer: "hardware",
+    x: 272, y: 688, w: 70, h: 48,
+    about:
+      "A flash chip holding the UEFI firmware, the first code the CPU runs. It initialises memory and devices, then loads a bootloader from the SSD.",
+  },
+  {
+    id: "hda",
+    label: "Audio",
+    sub: "HD Audio",
+    layer: "hardware",
+    x: 348, y: 688, w: 70, h: 48,
+    about:
+      "The HD Audio controller in the chipset reads samples from a buffer in RAM with DMA and streams them to the codec chip, whose digital-to-analog converter drives the speakers.",
+  },
+  {
+    id: "speakers",
+    label: "Speakers",
+    sub: "analog out",
+    layer: "hardware",
+    x: 424, y: 688, w: 96, h: 48,
+    about:
+      "Speakers or headphones move with the voltage from the codec. There is no buffer here: if the samples stop arriving in time, you hear it.",
   },
   {
     id: "display",
     label: "GPU + display",
     sub: "pixels",
     layer: "hardware",
-    x: 528, y: 688, w: 180, h: 52,
+    x: 528, y: 688, w: 180, h: 48,
     about:
-      "The GPU draws the composited desktop into a framebuffer, and the display controller sends it to your monitor.",
+      "The GPU draws the composited desktop into a framebuffer, and the display controller sends it to your monitor, refreshing at a fixed rate.",
   },
 
   // Network
@@ -479,11 +645,11 @@ const NODE_LIST: MachineNode[] = [
   {
     id: "router",
     label: "Home router",
-    sub: "192.168.1.1 · NAT · DNS forwarder",
+    sub: "192.168.1.1 · NAT · DNS · DHCP",
     layer: "network",
     x: 742, y: 586, w: 250, h: 82,
     about:
-      "Your home router joins the local network to your ISP. It translates private addresses to its public one (NAT) and often answers DNS queries itself, with its own cache.",
+      "Your home router joins the local network to your ISP. It hands out local addresses (DHCP), translates private addresses to its public one (NAT) and often answers DNS queries itself, with its own cache.",
   },
 ];
 
@@ -510,8 +676,9 @@ export const TOPOLOGY: { d: string; label?: string; lx?: number; ly?: number }[]
   { d: "M 820 360 L 797 124" },
   { d: "M 934 360 V 274" },
   { d: "M 876 244 H 862 V 60 H 876 M 862 110 H 876 M 862 160 H 876" },
-  { d: "M 101 284 V 296 M 101 336 V 348 M 101 388 V 400 M 101 440 V 452 M 101 492 V 628" },
-  { d: "M 618 284 V 296 M 618 336 V 348 M 618 388 V 400 M 618 440 V 452 M 618 492 V 576" },
+  { d: "M 101 284 V 296 M 101 336 V 348 M 101 388 V 400 M 101 440 V 452 M 101 492 V 582" },
+  { d: "M 618 284 V 296 M 618 336 V 348 M 618 388 V 400 M 618 440 V 452 M 618 492 V 582" },
+  { d: "M 116 683 H 422 V 741 H 116 Z", label: "chipset", lx: 269, ly: 750 },
 ];
 
 /** Hand-routed detours so a path does not cut through unrelated boxes. */
@@ -521,9 +688,52 @@ const VIA: Partial<Record<`${NodeId}>${NodeId}`, Point[]>> = {
   "resolver>auth": [{ x: 862, y: 244 }, { x: 862, y: 160 }],
 };
 
+// The kernel's middle column is two boxes wide. Paths between a box there and
+// the system call bar, or between boxes two or more rows apart on the same
+// side, run up the gap beside the column instead of through the boxes.
+const CENTRE = { left: 214, right: 504, split: 364, firstRow: 244 } as const;
+const TRUNK = { left: 200, right: 516 } as const;
+
+function inCentre(id: NodeId): boolean {
+  const n = NODES[id];
+  return n.layer === "kernel" && !n.bar && n.x >= CENTRE.left && n.x + n.w <= CENTRE.right;
+}
+
+function side(id: NodeId): "left" | "right" | "both" {
+  const n = NODES[id];
+  if (n.w > CENTRE.split - CENTRE.left) return "both";
+  return n.x < CENTRE.split ? "left" : "right";
+}
+
+function trunkRoute(from: NodeId, to: NodeId): Point[] {
+  const a = NODES[from];
+  const b = NODES[to];
+  if (b.bar && inCentre(from) && a.y > CENTRE.firstRow) {
+    const s = side(from);
+    if (s === "both") return [];
+    const x = TRUNK[s];
+    return [{ x, y: centerOf(from).y }, { x, y: CENTRE.firstRow - 6 }];
+  }
+  if (inCentre(from) && inCentre(to)) {
+    const sa = side(from);
+    const sb = side(to);
+    const rows = Math.abs(a.y - b.y) / 52;
+    if (rows >= 2 && (sa === sb || sa === "both" || sb === "both")) {
+      const s = sa === "both" ? sb : sa;
+      if (s === "both") return [];
+      const x = TRUNK[s];
+      return [{ x, y: centerOf(from).y }, { x, y: centerOf(to).y }];
+    }
+  }
+  return [];
+}
+
 export function viaPoints(from: NodeId, to: NodeId): Point[] {
   const forward = VIA[`${from}>${to}`];
   if (forward) return forward;
   const backward = VIA[`${to}>${from}`];
-  return backward ? [...backward].reverse() : [];
+  if (backward) return [...backward].reverse();
+  const trunk = trunkRoute(from, to);
+  if (trunk.length > 0) return trunk;
+  return [...trunkRoute(to, from)].reverse();
 }

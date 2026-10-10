@@ -52,18 +52,29 @@ export function ipv4(
   proto: "UDP" | "TCP",
   ttl: number | string = 64,
 ): Header {
+  // Documentation addresses aside, these two have fixed meanings (RFC 1122).
+  const note = (a: string) =>
+    a === "0.0.0.0" ? "0.0.0.0 (no address yet)" : a === "255.255.255.255" ? "255.255.255.255 (everyone)" : a;
   return {
     kind: "ip",
     title: "IPv4",
     bytes: 20,
     fields: [
-      { name: "Source", value: src },
-      { name: "Destination", value: dst },
+      { name: "Source", value: note(src) },
+      { name: "Destination", value: note(dst) },
       { name: "TTL", value: String(ttl) },
       { name: "Protocol", value: proto === "UDP" ? "17 (UDP)" : "6 (TCP)" },
     ],
   };
 }
+
+const WELL_KNOWN_PORTS: Record<number, string> = {
+  53: "53 (DNS)",
+  67: "67 (DHCP server)",
+  68: "68 (DHCP client)",
+};
+
+const portLabel = (port: number) => WELL_KNOWN_PORTS[port] ?? String(port);
 
 export function udp(sport: number, dport: number): Header {
   return {
@@ -71,10 +82,41 @@ export function udp(sport: number, dport: number): Header {
     title: "UDP",
     bytes: 8,
     fields: [
-      { name: "Source port", value: String(sport) },
-      { name: "Destination port", value: dport === 53 ? "53 (DNS)" : String(dport) },
+      { name: "Source port", value: portLabel(sport) },
+      { name: "Destination port", value: portLabel(dport) },
     ],
   };
+}
+
+type DhcpMessage = "DISCOVER" | "OFFER" | "REQUEST" | "ACK";
+
+/** DHCP (RFC 2131); the message type travels in option 53. */
+export function dhcp(type: DhcpMessage): Header {
+  const code = { DISCOVER: 1, OFFER: 2, REQUEST: 3, ACK: 5 }[type];
+  const fields: Header["fields"] = [{ name: "Message", value: `DHCP${type} (option 53 = ${code})` }];
+  if (type === "DISCOVER") {
+    fields.push(
+      { name: "Client", value: `${NET.host.mac} (this computer)` },
+      { name: "Asks for", value: "an address, the router, DNS servers" },
+    );
+  } else if (type === "REQUEST") {
+    fields.push(
+      { name: "Requested address", value: NET.host.ip },
+      { name: "Server", value: NET.router.ip },
+    );
+  } else {
+    fields.push({ name: "Your address", value: NET.host.ip });
+    if (type === "ACK") {
+      fields.push(
+        { name: "Router", value: NET.router.ip },
+        { name: "DNS server", value: NET.router.ip },
+        { name: "Lease", value: "a time limit, then it renews" },
+      );
+    } else {
+      fields.push({ name: "Server", value: NET.router.ip });
+    }
+  }
+  return { kind: "dhcp", title: `DHCP ${type}`, fields };
 }
 
 export function tcp(

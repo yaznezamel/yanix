@@ -1,7 +1,8 @@
 "use client";
 
 import { AnimatePresence, motion } from "motion/react";
-import { SearchIcon } from "./icons";
+import { useState } from "react";
+import { PowerIcon, RestartIcon, SearchIcon } from "./icons";
 
 export interface StartItem {
   id: string;
@@ -14,9 +15,16 @@ interface StartMenuProps {
   open: boolean;
   items: StartItem[];
   onClose: () => void;
+  onShutdown: () => void;
+  onRestart: () => void;
 }
 
-export function StartMenu({ open, items, onClose }: StartMenuProps) {
+export function StartMenu({ open, items, onClose, onShutdown, onRestart }: StartMenuProps) {
+  const [powerOpen, setPowerOpen] = useState(false);
+  const close = () => {
+    setPowerOpen(false);
+    onClose();
+  };
   return (
     <AnimatePresence>
       {open && (
@@ -25,7 +33,7 @@ export function StartMenu({ open, items, onClose }: StartMenuProps) {
             type="button"
             aria-label="Close start menu"
             className="absolute inset-0 z-[55] cursor-default"
-            onClick={onClose}
+            onClick={close}
           />
           <motion.div
             role="dialog"
@@ -48,7 +56,7 @@ export function StartMenu({ open, items, onClose }: StartMenuProps) {
                   type="button"
                   onClick={() => {
                     item.onOpen();
-                    onClose();
+                    close();
                   }}
                   className="flex flex-col items-center gap-1.5 rounded-md px-1 py-2.5 text-[11.5px] text-white/85 hover:bg-white/[0.08]"
                 >
@@ -64,7 +72,46 @@ export function StartMenu({ open, items, onClose }: StartMenuProps) {
                 </span>
                 you
               </span>
-              <span className="font-mono text-[10.5px] text-white/40">Linux · simulated</span>
+              <span className="flex items-center gap-2">
+                <span className="font-mono text-[10.5px] text-white/40">Linux · simulated</span>
+                <span className="relative">
+                  <button
+                    type="button"
+                    aria-label="Power"
+                    aria-expanded={powerOpen}
+                    onClick={() => setPowerOpen((v) => !v)}
+                    className="grid size-8 place-items-center rounded-md text-white/80 hover:bg-white/10"
+                  >
+                    <PowerIcon className="size-4" />
+                  </button>
+                  {powerOpen && (
+                    <div
+                      role="menu"
+                      aria-label="Power options"
+                      className="absolute bottom-10 right-0 w-40 rounded-md border border-white/10 bg-[#262b34] p-1 shadow-[0_12px_30px_rgba(0,0,0,0.5)]"
+                    >
+                      {[
+                        { label: "Shut down", icon: <PowerIcon className="size-4" />, run: onShutdown },
+                        { label: "Restart", icon: <RestartIcon className="size-4" />, run: onRestart },
+                      ].map((option) => (
+                        <button
+                          key={option.label}
+                          type="button"
+                          role="menuitem"
+                          onClick={() => {
+                            close();
+                            option.run();
+                          }}
+                          className="flex w-full items-center gap-2.5 rounded px-2.5 py-1.5 text-left text-[12px] text-white/85 hover:bg-white/10"
+                        >
+                          {option.icon}
+                          {option.label}
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </span>
+              </span>
             </div>
           </motion.div>
         </>

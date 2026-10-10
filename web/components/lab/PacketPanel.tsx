@@ -38,13 +38,20 @@ function summary(header: Header): string {
     case "tcp":
       return `port ${value("Source port")} → ${value("Destination port")} · ${value("Flags")}`;
     case "dns":
-      return value("Question") || value("Answer");
     case "arp":
       return value("Question") || value("Answer");
+    case "dhcp":
+      return value("Message");
     case "tls":
       return header.fields[0]?.value ?? "";
-    case "http":
-      return header.fields.map((f) => f.value).join(" ");
+    case "evdev":
+      return [value("type"), value("code"), value("value")].filter(Boolean).join(" · ");
+    case "vma":
+      return `${value("Permissions")} · ${value("Backed by")}`;
+    case "wayland":
+      return header.fields.map((f) => `${f.name} ${f.value}`).join(" · ");
+    default:
+      return header.fields.map((f) => f.value).join(" · ");
   }
 }
 
@@ -53,11 +60,12 @@ export function PacketPanel({ packet, previous }: PacketPanelProps) {
 
   if (!packet) {
     return (
-      <section aria-label="Packet" className="flex h-full flex-col gap-2 p-4">
-        <h2 className="font-mono text-[11px] uppercase tracking-[0.14em] text-lab-muted">Packet</h2>
+      <section aria-label="Data" className="flex h-full flex-col gap-2 p-4">
+        <h2 className="font-mono text-[11px] uppercase tracking-[0.14em] text-lab-muted">Data</h2>
         <p className="text-[13px] leading-relaxed text-lab-muted">
-          No packet in this step. When data crosses the network stack, its headers appear here as
-          each layer adds or removes them.
+          Nothing in flight in this step. When data moves between layers, what it travels in shows
+          up here: packet headers as each layer adds or removes them, USB reports, input events,
+          Wayland messages, NVMe commands, memory maps.
         </p>
       </section>
     );
@@ -70,9 +78,11 @@ export function PacketPanel({ packet, previous }: PacketPanelProps) {
   const anyFocus = packet.headers.some((h, i) => isNew(h) || (changes[i]?.size ?? 0) > 0);
 
   return (
-    <section aria-label="Packet" className="flex h-full min-h-0 flex-col gap-2.5 p-4">
+    <section aria-label="Data" className="flex h-full min-h-0 flex-col gap-2.5 p-4">
       <div className="flex items-center justify-between gap-3">
-        <h2 className="font-mono text-[11px] uppercase tracking-[0.14em] text-lab-muted">Packet</h2>
+        <h2 className="font-mono text-[11px] uppercase tracking-[0.14em] text-lab-muted">
+          {packet.label ?? "Packet"}
+        </h2>
         <div className="flex items-center gap-2">
           {bytes !== null && (
             <span className="font-mono text-[10.5px] text-lab-muted">
@@ -146,8 +156,8 @@ export function PacketPanel({ packet, previous }: PacketPanelProps) {
                 </div>
                 {focus ? (
                   <dl className="mt-0.5 grid grid-cols-[auto_1fr] gap-x-3 text-[11.5px]">
-                    {header.fields.map((field) => (
-                      <div key={field.name} className="contents">
+                    {header.fields.map((field, f) => (
+                      <div key={`${field.name}-${f}`} className="contents">
                         <dt className="text-lab-muted">{field.name}</dt>
                         <dd
                           className={`min-w-0 break-words font-mono text-[11px] ${

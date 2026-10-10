@@ -103,6 +103,83 @@
   pointer-events: none;
 }
 
+/* Media player visuals: they move only while something plays. */
+.eq {
+  transform-origin: bottom;
+  animation: eq 0.9s ease-in-out infinite alternate;
+}
+
+@keyframes eq {
+  from {
+    transform: scaleY(0.25);
+  }
+  to {
+    transform: scaleY(1);
+  }
+}
+
+.sky {
+  background: linear-gradient(to bottom, #0b1636 0%, #3a2a5c 45%, #f08a5d 100%);
+  background-size: 100% 200%;
+  animation: sky 20s linear infinite alternate;
+}
+
+@keyframes sky {
+  from {
+    background-position: 0 0;
+  }
+  to {
+    background-position: 0 100%;
+  }
+}
+
+.sun {
+  position: absolute;
+  left: 50%;
+  bottom: 12%;
+  width: 96px;
+  height: 96px;
+  margin-left: -48px;
+  border-radius: 50%;
+  background: radial-gradient(circle, #ffe3a3 0%, #ff9a4d 55%, rgba(255, 154, 77, 0) 70%);
+  animation: sunrise 20s ease-out infinite alternate;
+}
+
+@keyframes sunrise {
+  from {
+    transform: translateY(40px);
+  }
+  to {
+    transform: translateY(-150px);
+  }
+}
+
+.progress {
+  width: 100%;
+  transform-origin: left;
+  animation: progress 45s linear infinite;
+}
+
+@keyframes progress {
+  from {
+    transform: scaleX(0);
+  }
+  to {
+    transform: scaleX(1);
+  }
+}
+
+.eq,
+.sky,
+.sun,
+.progress {
+  animation-play-state: paused;
+}
+
+.running {
+  animation-play-state: running;
+}
+
 /* On wide screens the lab fills the viewport. The left column is a size
    container, so the screen keeps its 16:10 shape and shrinks until the panels
    under it get the height in --reserve. 1.6 is 960 / 600; 18px is the bezel's
@@ -124,7 +201,11 @@
   .marching,
   .boundaryActive,
   .spin,
-  .blink {
+  .blink,
+  .eq,
+  .sky,
+  .sun,
+  .progress {
     animation: none;
   }
 }

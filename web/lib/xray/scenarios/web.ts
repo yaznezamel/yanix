@@ -12,63 +12,13 @@ import {
   tcp,
   tls,
   udp,
-} from "./packets";
-import type {
-  AppId,
-  AppState,
-  Header,
-  MachineState,
-  NodeId,
-  Scenario,
-  ScenarioRequest,
-  Step,
-} from "./types";
+} from "../packets";
+import type { Header, MachineState, NodeId, Scenario, Step } from "../types";
+import { keysStep } from "./common";
 
-// Every scenario is a list of steps built from the machine's current state:
-// what is cached decides which steps happen at all. Texts stay short; the
-// node inspector carries the longer explanations.
-
-export const PROMPT = "you@yanix:~$";
-
-export const SUGGESTED_QUERIES = [
-  "how does dns work",
-  "what is a system call",
-  "linux page cache",
-];
-
-export const NOTES_TXT = [
-  "Notes to self:",
-  "- Programs never touch hardware directly. They ask the kernel.",
-  "- The first read of this file came from the SSD.",
-  "- Run cat notes.txt again: the page cache answers from RAM.",
-];
-
-export const COLD_MACHINE: MachineState = {
-  arpCached: false,
-  dnsCached: false,
-  connectionOpen: false,
-  fileCached: false,
-};
-
-export const INITIAL_APPS: AppState = {
-  browser: {
-    page: "newtab",
-    query: "",
-    url: "",
-    title: "New Tab",
-    loading: false,
-    status: null,
-    progress: 0,
-    secure: false,
-  },
-  terminal: {
-    lines: [
-      { kind: "banner", text: "Yanix terminal · commands are simulated, the kernel path is real" },
-      { kind: "hint", text: "Try: cat notes.txt   ·   help" },
-    ],
-    busy: false,
-  },
-};
+// A web search, from the Enter key to pixels: DNS (with ARP when the router's
+// MAC address is unknown), the TCP and TLS handshakes, HTTP/2 and rendering.
+// What is cached decides which of those happen at all.
 
 const H = NET.host.ip;
 const R = NET.router.ip;
@@ -129,130 +79,6 @@ function httpRequest(query: string): Header {
 const DNS_Q = "DNS query: the IPv4 address of www.example.com?";
 const DNS_A = "DNS answer: www.example.com is 203.0.113.10";
 
-function keyPress(target: NodeId, what: string): Step {
-  return {
-    id: "key",
-    phase: "input",
-    path: ["inputdev", "irq", "input", "syscall", "shell", target],
-    title: "You press Enter",
-    body: `The key press travels like any input: a USB interrupt, the kernel's input layer, a read() by the compositor, and an event delivered to the focused ${what} window.`,
-    code: [
-      { project: "linux", path: "drivers/input/input.c", symbol: "input_event" },
-      { project: "linux", path: "drivers/input/evdev.c" },
-    ],
-    timescale: "us",
-  };
-}
-
-// ---------------------------------------------------------------- launch
-
-function launch(app: AppId): Scenario {
-  const isBrowser = app === "browser";
-  const node: NodeId = isBrowser ? "browser" : "terminal";
-  const name = isBrowser ? "Chromium" : "the terminal emulator";
-  const steps: Step[] = [
-    {
-      id: "click",
-      phase: "input",
-      path: ["inputdev", "irq", "input"],
-      title: "Your click is an interrupt",
-      body: "The mouse sends a USB report. The USB controller raises an interrupt, and the kernel's HID driver turns the report into a button event in the input subsystem.",
-      code: [
-        { project: "linux", path: "drivers/hid/usbhid/hid-core.c" },
-        { project: "linux", path: "drivers/input/input.c", symbol: "input_event" },
-      ],
-      timescale: "us",
-    },
-    {
-      id: "compositor",
-      phase: "input",
-      path: ["input", "syscall", "shell"],
-      title: "The compositor reads the event",
-      body: "The compositor waits on /dev/input/event* through libinput. A read() returns the click, and it works out which icon was under the pointer.",
-      code: [{ project: "linux", path: "drivers/input/evdev.c", symbol: "evdev_read" }],
-      timescale: "us",
-    },
-    {
-      id: "clone",
-      phase: "launch",
-      path: ["shell", "syscall", "proc"],
-      title: "clone(): a new process",
-      body: "The shell asks the kernel for a new process. clone() creates a new task_struct, which starts as a copy of the shell and is about to replace its program.",
-      code: [{ project: "linux", path: "kernel/fork.c", symbol: "kernel_clone" }],
-      timescale: "us",
-    },
-    {
-      id: "runqueue",
-      phase: "launch",
-      mode: "deep",
-      path: ["proc", "sched"],
-      title: "The scheduler picks it up",
-      body: "wake_up_new_task() puts the new task on a run queue, and the scheduler soon gives it a CPU core.",
-      code: [{ project: "linux", path: "kernel/sched/core.c", symbol: "wake_up_new_task" }],
-      timescale: "us",
-    },
-    {
-      id: "execve",
-      phase: "launch",
-      path: ["proc", node],
-      title: `execve(): loading ${isBrowser ? "Chromium" : "the terminal"}`,
-      body: `The new process calls execve() on ${name}'s program file. The kernel reads the ELF header and maps the program and the dynamic linker into memory without reading the whole file; the dynamic linker then maps the shared libraries with mmap().`,
-      code: [
-        { project: "linux", path: "fs/exec.c" },
-        { project: "linux", path: "fs/binfmt_elf.c", symbol: "load_elf_binary" },
-      ],
-      timescale: "us",
-    },
-    {
-      id: "fault",
-      phase: "launch",
-      path: [node, "mm", "pagecache"],
-      title: "Code arrives on demand: page faults",
-      body: "The first instructions touch pages that are mapped but not loaded. Each page fault makes the kernel fetch the page, from the page cache if it is there (from the SSD if not), map it, and retry the instruction.",
-      code: [
-        { project: "linux", path: "mm/memory.c", symbol: "handle_mm_fault" },
-        { project: "linux", path: "mm/filemap.c", symbol: "filemap_fault" },
-      ],
-      timescale: "us",
-    },
-    isBrowser
-      ? {
-          id: "helpers",
-          phase: "launch",
-          path: ["browser", "proc", "netsvc", "renderer"],
-          title: "Chromium starts its helper processes",
-          body: "Chromium splits its work across processes: a network service, a GPU process and sandboxed renderers. On Linux, renderers are forked from a zygote process started early on.",
-          code: [{ project: "chromium", path: "content/zygote/" }],
-          timescale: "ms",
-        }
-      : {
-          id: "pty",
-          phase: "launch",
-          path: ["terminal", "syscall", "tty", "bash"],
-          title: "bash gets a pseudo-terminal",
-          body: "The terminal opens /dev/ptmx to get a pseudo-terminal pair, starts bash with clone() and execve(), and gives bash the other end, /dev/pts/N, as its keyboard and screen.",
-          code: [{ project: "linux", path: "drivers/tty/pty.c" }],
-          timescale: "us",
-        },
-    {
-      id: "draw",
-      phase: "render",
-      path: [node, "syscall", "drm", "display"],
-      title: "The window appears",
-      body: "The app draws its window with the GPU, submitting work to the graphics driver through ioctl() calls, and the compositor places the window on screen.",
-      code: [{ project: "linux", path: "drivers/gpu/drm/drm_ioctl.c" }],
-      timescale: "ms",
-    },
-  ];
-  return {
-    kind: "launch",
-    app,
-    title: `Opening ${isBrowser ? "Chromium" : "Terminal"}`,
-    focus: "split",
-    steps,
-  };
-}
-
 // ---------------------------------------------------------------- search
 
 function dnsSteps(m: MachineState): Step[] {
@@ -272,8 +98,8 @@ function dnsSteps(m: MachineState): Step[] {
       phase: "dns",
       path: ["netsvc", "glibc"],
       title: "getaddrinfo(\"www.example.com\")",
-      body: "glibc's resolver follows /etc/nsswitch.conf: /etc/hosts first, then DNS. /etc/resolv.conf names the DNS server: the home router, 192.168.1.1.",
-      code: [{ project: "glibc", path: "sysdeps/posix/getaddrinfo.c" }],
+      body: "glibc's resolver follows /etc/nsswitch.conf: /etc/hosts first, then DNS. /etc/resolv.conf names the DNS server: the home router, 192.168.1.1, as DHCP said at boot. Many distributions put a local cache (systemd-resolved) in between; this model leaves it out.",
+      code: [{ project: "glibc", path: "nss/getaddrinfo.c", symbol: "getaddrinfo" }],
       timescale: "us",
       ui: { browser: { status: "Resolving host…", progress: 0.1 } },
     },
@@ -942,10 +768,10 @@ function httpSteps(query: string, reused: boolean): Step[] {
   ];
 }
 
-function webSearch(query: string, m: MachineState): Scenario {
+export function webSearch(query: string, m: MachineState): Scenario {
   const reused = m.connectionOpen;
   const steps: Step[] = [
-    keyPress("browser", "browser"),
+    keysStep("key", "browser", "You press Enter", "Chromium"),
     {
       id: "omnibox",
       phase: "input",
@@ -994,229 +820,4 @@ function webSearch(query: string, m: MachineState): Scenario {
     focus: "machine",
     steps,
   };
-}
-
-// ---------------------------------------------------------------- cat
-
-function readFile(m: MachineState): Scenario {
-  const cached = m.fileCached;
-  const steps: Step[] = [
-    keyPress("terminal", "terminal"),
-    {
-      id: "pty",
-      phase: "input",
-      path: ["terminal", "syscall", "tty", "bash"],
-      title: "Through the pseudo-terminal",
-      body: "The terminal writes the keystroke into its end of the pseudo-terminal. The kernel's TTY layer delivers it to bash, which reads it from /dev/pts/N as if from a real keyboard.",
-      code: [
-        { project: "linux", path: "drivers/tty/pty.c" },
-        { project: "linux", path: "drivers/tty/tty_io.c" },
-      ],
-      timescale: "us",
-    },
-    {
-      id: "fork-exec",
-      phase: "launch",
-      path: ["bash", "syscall", "proc", "cat"],
-      title: "bash starts cat",
-      body: "bash creates a child with clone(), and the child calls execve(\"/usr/bin/cat\"). cat inherits bash's open files, so its output (file descriptor 1) is the same pseudo-terminal.",
-      code: [
-        { project: "linux", path: "kernel/fork.c", symbol: "kernel_clone" },
-        { project: "linux", path: "fs/exec.c" },
-      ],
-      timescale: "us",
-    },
-    {
-      id: "openat",
-      phase: "file",
-      path: ["cat", "syscall", "vfs"],
-      title: "openat(\"notes.txt\")",
-      body: "The VFS walks the path one component at a time through the dentry cache, checks permissions, and gives cat file descriptor 3.",
-      code: [
-        { project: "linux", path: "fs/open.c", symbol: "do_sys_openat2" },
-        { project: "linux", path: "fs/namei.c", symbol: "path_openat" },
-      ],
-      timescale: "us",
-    },
-    {
-      id: "read",
-      phase: "file",
-      path: ["cat", "syscall", "vfs", "pagecache"],
-      title: cached ? "read(): a page cache hit" : "read(): is it in the page cache?",
-      body: cached
-        ? "read() goes through vfs_read() to filemap_read(), which finds the file's page already in RAM from the last read. No disk access at all."
-        : "read() goes through vfs_read() to filemap_read(), which looks for the file's pages in the page cache. Not there yet, so the kernel has to ask the SSD.",
-      code: [
-        { project: "linux", path: "fs/read_write.c", symbol: "ksys_read" },
-        { project: "linux", path: "mm/filemap.c", symbol: "filemap_read" },
-      ],
-      timescale: cached ? "ns" : "us",
-    },
-  ];
-  if (!cached) {
-    steps.push(
-      {
-        id: "ext4",
-        phase: "file",
-        path: ["pagecache", "ext4"],
-        title: "ext4 finds the blocks",
-        body: "ext4_map_blocks() translates the position in the file into a block number on the SSD, using the file's extent tree.",
-        code: [{ project: "linux", path: "fs/ext4/inode.c", symbol: "ext4_map_blocks" }],
-        timescale: "us",
-      },
-      {
-        id: "bio",
-        phase: "file",
-        path: ["ext4", "block", "nvme"],
-        title: "A request for the SSD",
-        body: "A bio describing the read passes the block layer, which can merge and schedule requests, and reaches the NVMe driver.",
-        code: [
-          { project: "linux", path: "block/blk-core.c", symbol: "submit_bio" },
-          { project: "linux", path: "drivers/nvme/host/pci.c", symbol: "nvme_queue_rq" },
-        ],
-        timescale: "us",
-      },
-      {
-        id: "doorbell",
-        phase: "file",
-        path: ["nvme", "ram", "ssd"],
-        title: "Command and doorbell",
-        body: "The driver writes a read command into a submission queue in RAM, then rings the SSD's doorbell register to say there is work.",
-        timescale: "us",
-      },
-      {
-        id: "sleep",
-        phase: "file",
-        path: ["cat", "sched"],
-        title: "cat sleeps",
-        body: "cat can't continue without the data, so it sleeps. The scheduler gives the CPU to other work in the meantime.",
-        code: [{ project: "linux", path: "kernel/sched/core.c", symbol: "schedule" }],
-        timescale: "us",
-      },
-      {
-        id: "dma",
-        phase: "file",
-        path: ["ssd", "ram"],
-        title: "The SSD copies the data with DMA",
-        learns: { fileCached: true },
-        body: "The SSD reads its flash and writes the 4 KB page straight into a page-cache page in RAM. No CPU time is spent copying.",
-        timescale: "us",
-      },
-      {
-        id: "irq",
-        phase: "file",
-        path: ["ssd", "irq", "nvme", "sched", "cat"],
-        title: "Interrupt: the data is ready",
-        body: "The SSD posts a completion entry and raises an MSI-X interrupt. The NVMe driver completes the request, the page is marked up to date and cat wakes up.",
-        code: [
-          { project: "linux", path: "drivers/nvme/host/pci.c", symbol: "nvme_irq" },
-          { project: "linux", path: "kernel/sched/core.c", symbol: "try_to_wake_up" },
-        ],
-        timescale: "us",
-      },
-    );
-  }
-  steps.push(
-    {
-      id: "copy",
-      phase: "file",
-      path: ["pagecache", "syscall", "cat"],
-      title: "copy_to_user()",
-      body: "The kernel copies the bytes from the page cache into cat's buffer, and read() returns how many it copied.",
-      code: [{ project: "linux", path: "lib/iov_iter.c" }],
-      timescale: "ns",
-    },
-    {
-      id: "write",
-      phase: "output",
-      path: ["cat", "syscall", "tty", "terminal"],
-      title: "write() to the terminal",
-      body: "cat writes the bytes to file descriptor 1. The TTY layer passes them through the pseudo-terminal to the terminal emulator, which draws the text.",
-      code: [
-        { project: "linux", path: "fs/read_write.c", symbol: "ksys_write" },
-        { project: "linux", path: "drivers/tty/tty_io.c", symbol: "tty_write" },
-      ],
-      timescale: "us",
-      ui: { terminalAppend: NOTES_TXT.map((text) => ({ kind: "output" as const, text })) },
-    },
-    {
-      id: "exit",
-      phase: "output",
-      path: ["cat", "syscall", "proc", "bash"],
-      title: "cat exits, bash takes over",
-      body: "The next read() returns 0, end of file, so cat calls exit_group(). bash, waiting in wait4(), collects the exit status and prints a new prompt.",
-      code: [{ project: "linux", path: "kernel/exit.c", symbol: "do_exit" }],
-      timescale: "us",
-      ui: { terminalBusy: false },
-    },
-    {
-      id: "file-done",
-      phase: "output",
-      path: ["pagecache"],
-      title: cached ? "Served from RAM" : "The file stays in RAM",
-      body: cached
-        ? "No SSD, no interrupt, no sleeping: a page cache hit skips the whole storage stack."
-        : "notes.txt now sits in the page cache. Run cat notes.txt again: the second read never touches the SSD.",
-    },
-  );
-  return {
-    kind: "readFile",
-    app: "terminal",
-    title: "cat notes.txt",
-    focus: "machine",
-    steps,
-  };
-}
-
-// ---------------------------------------------------------------- entry points
-
-export function buildScenario(request: ScenarioRequest, machine: MachineState): Scenario {
-  switch (request.kind) {
-    case "launch":
-      return launch(request.app);
-    case "search":
-      return webSearch(request.query, machine);
-    case "readFile":
-      return readFile(machine);
-  }
-}
-
-/** What the machine remembers once the scenario has run. */
-export function machineAfter(request: ScenarioRequest, machine: MachineState): MachineState {
-  switch (request.kind) {
-    case "search":
-      return { ...machine, arpCached: true, dnsCached: true, connectionOpen: true };
-    case "readFile":
-      return { ...machine, fileCached: true };
-    case "launch":
-      return machine;
-  }
-}
-
-/** What changes on screen the moment the user acts, before any step plays. */
-export function applyTrigger(request: ScenarioRequest, apps: AppState): AppState {
-  switch (request.kind) {
-    case "search":
-      return {
-        ...apps,
-        browser: {
-          ...apps.browser,
-          query: request.query.trim(),
-          url: searchUrl(request.query),
-          loading: true,
-          status: null,
-          progress: 0.02,
-        },
-      };
-    case "readFile":
-      return {
-        ...apps,
-        terminal: {
-          lines: [...apps.terminal.lines, { kind: "prompt", text: "cat notes.txt" }],
-          busy: true,
-        },
-      };
-    case "launch":
-      return apps;
-  }
 }

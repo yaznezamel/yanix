@@ -1,20 +1,18 @@
-import {
-  COLD_MACHINE,
-  INITIAL_APPS,
-  applyTrigger,
-  buildScenario,
-  machineAfter,
-} from "./scenarios";
+import { CLOSED_WINDOWS, COLD_MACHINE, FRESH_APPS, INITIAL_APPS } from "./apps";
+import { applyTrigger, buildScenario, machineAfter } from "./scenarios";
 import type {
   AppId,
   AppState,
   Detail,
   MachineState,
+  MediaState,
   Scenario,
   ScenarioRequest,
   Step,
   TermLine,
   UiEffect,
+  WindowId,
+  WindowStatus,
 } from "./types";
 
 // The playback engine is a pure reducer: every button, timer tick and app
@@ -73,7 +71,11 @@ export type PlayerAction =
   | { type: "speed"; speed: Speed }
   | { type: "clearCaches" }
   | { type: "closeApp"; app: AppId }
+  | { type: "window"; id: WindowId; status: WindowStatus }
   | { type: "terminal"; append?: TermLine[]; clear?: boolean }
+  | { type: "draft"; text: string }
+  | { type: "editorText"; text: string }
+  | { type: "media"; patch: Partial<MediaState> }
   | { type: "dismiss" };
 
 export function visibleSteps(scenario: Scenario, detail: Detail): Step[] {
@@ -83,7 +85,21 @@ export function visibleSteps(scenario: Scenario, detail: Detail): Step[] {
 export function applyEffect(apps: AppState, ui: UiEffect | undefined): AppState {
   if (!ui) return apps;
   let next = apps;
+  if (ui.closeAll) next = { ...next, ...FRESH_APPS, windows: CLOSED_WINDOWS, clipboard: null };
+  if (ui.screen) next = { ...next, screen: ui.screen };
+  if (ui.clearBootLog) next = { ...next, bootLog: [] };
+  if (ui.bootLog) next = { ...next, bootLog: [...next.bootLog, ...ui.bootLog] };
+  if (ui.windows) next = { ...next, windows: { ...next.windows, ...ui.windows } };
   if (ui.browser) next = { ...next, browser: { ...next.browser, ...ui.browser } };
+  if (ui.draftInsert) {
+    next = { ...next, browser: { ...next.browser, draft: next.browser.draft + ui.draftInsert } };
+  }
+  if (ui.editor) next = { ...next, editor: { ...next.editor, ...ui.editor } };
+  if (ui.editorInsert) {
+    next = { ...next, editor: { ...next.editor, text: next.editor.text + ui.editorInsert } };
+  }
+  if (ui.player) next = { ...next, player: { ...next.player, ...ui.player } };
+  if (ui.clipboard !== undefined) next = { ...next, clipboard: ui.clipboard };
   if (ui.terminalAppend || ui.terminalBusy !== undefined) {
     next = {
       ...next,
@@ -177,8 +193,60 @@ function mutateApps(state: PlayerState, fn: (apps: AppState) => AppState): Playe
   return { ...state, apps: fn(state.apps) };
 }
 
-function resetApp(apps: AppState, app: AppId): AppState {
-  return { ...apps, [app]: INITIAL_APPS[app] };
+/** App state the user can edit directly, which some traces also change. */
+export type UserField = "draft" | "editor" | "player";
+
+function touches(run: Run, field: UserField): boolean {
+  return run.scenario.steps.some(({ ui }) => {
+    if (!ui) return false;
+    if (ui.closeAll) return true;
+    switch (field) {
+      case "draft":
+        return ui.draftInsert !== undefined || ui.browser?.draft !== undefined;
+      case "editor":
+        return ui.editor !== undefined || ui.editorInsert !== undefined;
+      case "player":
+        return ui.player !== undefined;
+    }
+  });
+}
+
+/**
+ * A field that the running trace will still change is read-only until the
+ * trace ends; otherwise the step would overwrite (or repeat) what you typed.
+ */
+export function fieldLocked(state: PlayerState, field: UserField): boolean {
+  const run = state.run;
+  return run !== null && run.status !== "done" && touches(run, field);
+}
+
+/** Edit a user field: once a trace that touched it is over, commit that trace first. */
+function editApps(state: PlayerState, field: UserField, fn: (apps: AppState) => AppState): PlayerState {
+  const run = state.run;
+  if (run && touches(run, field)) {
+    if (run.status !== "done") return state;
+    return { ...state, apps: fn(finalApps(run)), run: null };
+  }
+  return mutateApps(state, fn);
+}
+
+/** The app quits: its window closes, its state resets, and any clipboard it owned is gone. */
+function closeApp(apps: AppState, app: AppId): AppState {
+  const next: AppState = {
+    ...apps,
+    windows: { ...apps.windows, [app]: "closed" },
+    clipboard: apps.clipboard?.owner === app ? null : apps.clipboard,
+  };
+  switch (app) {
+    case "browser":
+      return { ...next, browser: FRESH_APPS.browser };
+    case "terminal":
+      return { ...next, terminal: FRESH_APPS.terminal };
+    case "editor":
+      return { ...next, editor: FRESH_APPS.editor };
+    case "player":
+      return { ...next, player: FRESH_APPS.player };
+  }
 }
 
 export function playerReducer(state: PlayerState, action: PlayerAction): PlayerState {
@@ -186,13 +254,15 @@ export function playerReducer(state: PlayerState, action: PlayerAction): PlayerS
   switch (action.type) {
     case "start": {
       const apps = committed(state);
+      // An app that is already starting or open isn't launched again.
+      if (action.request.kind === "launch" && apps.windows[action.request.app] !== "closed") return state;
       const scenario = buildScenario(action.request, state.machine);
       const seq = state.seq + 1;
       return {
         ...state,
         seq,
         apps,
-        machine: machineAfter(action.request, state.machine),
+        machine: machineAfter(scenario, state.machine),
         run: {
           seq,
           replay: 0,
@@ -266,13 +336,24 @@ export function playerReducer(state: PlayerState, action: PlayerAction): PlayerS
       const machine =
         action.app === "browser" ? { ...state.machine, connectionOpen: false } : state.machine;
       if (run && run.scenario.app === action.app) {
-        return { ...state, machine, run: null, apps: resetApp(committed(state), action.app) };
+        return { ...state, machine, run: null, apps: closeApp(committed(state), action.app) };
       }
-      const next = mutateApps({ ...state, machine }, (apps) => resetApp(apps, action.app));
+      const next = mutateApps({ ...state, machine }, (apps) => closeApp(apps, action.app));
       return next.run && action.app === "browser"
         ? { ...next, run: { ...next.run, before: { ...next.run.before, connectionOpen: false } } }
         : next;
     }
+    case "window":
+      return mutateApps(state, (apps) => ({
+        ...apps,
+        windows: { ...apps.windows, [action.id]: action.status },
+      }));
+    case "draft":
+      return editApps(state, "draft", (apps) => ({ ...apps, browser: { ...apps.browser, draft: action.text } }));
+    case "editorText":
+      return editApps(state, "editor", (apps) => ({ ...apps, editor: { ...apps.editor, text: action.text } }));
+    case "media":
+      return editApps(state, "player", (apps) => ({ ...apps, player: { ...apps.player, ...action.patch } }));
     case "terminal":
       return mutateApps(state, (apps) => ({
         ...apps,

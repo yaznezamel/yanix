@@ -94,3 +94,46 @@ export function InfoIcon({ className }: IconProps) {
     </svg>
   );
 }
+
+export function EditorIcon({ className }: IconProps) {
+  return (
+    <svg viewBox="0 0 32 32" className={className} aria-hidden>
+      <path d="M8 3.5h11l6 6V27a1.5 1.5 0 0 1-1.5 1.5h-15A1.5 1.5 0 0 1 7 27V5a1.5 1.5 0 0 1 1-1.5z" fill="#f4f6fa" />
+      <path d="M19 3.5V9a.5.5 0 0 0 .5.5H25" fill="#c9d1dc" />
+      <path d="M11 14h10M11 18h10M11 22h6" stroke="#5b6b80" strokeWidth="1.8" strokeLinecap="round" />
+    </svg>
+  );
+}
+
+export function PlayerIcon({ className }: IconProps) {
+  return (
+    <svg viewBox="0 0 32 32" className={className} aria-hidden>
+      <defs>
+        <linearGradient id="ico-player" x1="0" y1="0" x2="1" y2="1">
+          <stop offset="0" stopColor="#ff7ab6" />
+          <stop offset="1" stopColor="#a06eff" />
+        </linearGradient>
+      </defs>
+      <rect x="3" y="5" width="26" height="22" rx="6" fill="url(#ico-player)" />
+      <path d="M13 11.5v9l7.5-4.5z" fill="#ffffff" />
+    </svg>
+  );
+}
+
+export function PowerIcon({ className }: IconProps) {
+  return (
+    <svg viewBox="0 0 24 24" className={className} aria-hidden>
+      <path d="M12 3.5v8" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+      <path d="M7.4 6.6a7.5 7.5 0 1 0 9.2 0" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+    </svg>
+  );
+}
+
+export function RestartIcon({ className }: IconProps) {
+  return (
+    <svg viewBox="0 0 24 24" className={className} aria-hidden>
+      <path d="M19 12a7 7 0 1 1-2.05-4.95" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+      <path d="M19.5 4.5v4h-4" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  );
+}

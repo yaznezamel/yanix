@@ -145,6 +145,8 @@ export function XRayMap({
   const crossed = crossings(step);
   const packet = step ? packetAt(step.frames, reached) : null;
   const current = step ? step.path[Math.min(reached, step.path.length - 1)] : undefined;
+  const cacheAt = step?.cache ? step.path.indexOf("pagecache") : -1;
+  const showCache = cacheAt >= 0 && reached >= cacheAt;
 
   function stateOf(id: NodeId): NodeState {
     if (!step) return "idle";
@@ -166,10 +168,10 @@ export function XRayMap({
         <filter
           id="xray-glow"
           filterUnits="userSpaceOnUse"
-          x="0"
-          y="0"
-          width={VIEW.width}
-          height={VIEW.height}
+          x={-60}
+          y={-60}
+          width={VIEW.width + 120}
+          height={VIEW.height + 120}
         >
           <feGaussianBlur stdDeviation="3.2" result="blur" />
           <feMerge>
@@ -283,6 +285,8 @@ export function XRayMap({
           onSelect={onSelect}
         />
       ))}
+
+      {showCache && step?.cache && <CacheBadge key={`${stepKey}-cache`} kind={step.cache} />}
 
       {geometry && (
         <g ref={markerRef} pointerEvents="none">
@@ -400,9 +404,9 @@ function Decoration({ node }: { node: MachineNode }) {
       return (
         <g>
           {[0, 1, 2, 3].map((i) => (
-            <g key={i} transform={`translate(${14 + (i % 2) * 54} ${54 + Math.floor(i / 2) * 50})`}>
-              <rect width={46} height={40} rx={4} fill={alpha(hex, 0.08)} stroke={ink} />
-              <text x={23} y={24} textAnchor="middle" fontSize={9} fill="#8b96a3" className="font-mono">
+            <g key={i} transform={`translate(${12 + (i % 2) * 54} ${46 + Math.floor(i / 2) * 26})`}>
+              <rect width={50} height={22} rx={3} fill={alpha(hex, 0.08)} stroke={ink} />
+              <text x={25} y={14.5} textAnchor="middle" fontSize={8.5} fill="#8b96a3" className="font-mono">
                 core {i}
               </text>
             </g>
@@ -413,9 +417,9 @@ function Decoration({ node }: { node: MachineNode }) {
       return (
         <g>
           {["program code", "page cache", "rings · buffers"].map((label, i) => (
-            <g key={label} transform={`translate(12 ${54 + i * 34})`}>
-              <rect width={node.w - 24} height={26} rx={4} fill={alpha(hex, 0.08)} stroke={ink} />
-              <text x={8} y={17} fontSize={9.5} fill="#8b96a3" className="font-mono">
+            <g key={label} transform={`translate(12 ${44 + i * 18})`}>
+              <rect width={node.w - 24} height={15} rx={3} fill={alpha(hex, 0.08)} stroke={ink} />
+              <text x={7} y={11} fontSize={9} fill="#8b96a3" className="font-mono">
                 {label}
               </text>
             </g>
@@ -426,7 +430,7 @@ function Decoration({ node }: { node: MachineNode }) {
       return (
         <g>
           {[0, 1, 2].map((i) => (
-            <g key={i} transform={`translate(${12 + i * 52} 56)`}>
+            <g key={i} transform={`translate(${12 + i * 52} 48)`}>
               <rect width={44} height={40} rx={3} fill="#0b0e12" stroke={ink} />
               <text x={22} y={24} textAnchor="middle" fontSize={8.5} fill="#8b96a3" className="font-mono">
                 NAND
@@ -442,9 +446,52 @@ function Decoration({ node }: { node: MachineNode }) {
           <rect x={8} y={16} width={16} height={10} fill={alpha(hex, 0.3)} />
         </g>
       );
+    case "speakers":
+      return (
+        <g transform={`translate(${node.w - 21} 9)`} fill="none" stroke={ink} strokeWidth={1.4}>
+          <path d="M0 5h4l5-4v14l-5-4H0z" fill={alpha(hex, 0.25)} />
+          <path d="M12 4.5a5 5 0 0 1 0 7" strokeLinecap="round" />
+        </g>
+      );
     default:
       return null;
   }
+}
+
+/** The moment the page cache decides: HIT means RAM answers, MISS means a trip to the disk. */
+function CacheBadge({ kind }: { kind: "hit" | "miss" }) {
+  const node = NODES.pagecache;
+  const color = kind === "hit" ? "#7ee0a1" : "#ffb35c";
+  const cx = node.x + node.w - 34;
+  const cy = node.y + node.h / 2;
+  return (
+    <g pointerEvents="none" aria-hidden>
+      <motion.circle
+        cx={node.x + node.w / 2}
+        cy={cy}
+        fill="none"
+        stroke={color}
+        strokeWidth={2}
+        initial={{ r: 24, opacity: 0.85 }}
+        animate={{ r: 120, opacity: 0 }}
+        transition={{ duration: 1.1, ease: "easeOut" }}
+      />
+      <g transform={`translate(${cx} ${cy})`}>
+        <motion.g
+          initial={{ scale: 0.4, opacity: 0 }}
+          animate={{ scale: [0.4, 1.18, 1], opacity: 1 }}
+          transition={{ duration: 0.5, times: [0, 0.6, 1] }}
+          style={{ transformBox: "fill-box", transformOrigin: "center" }}
+        >
+          <rect x={-31} y={-14} width={62} height={28} rx={14} fill={alpha(color, 0.28)} />
+          <rect x={-25} y={-10} width={50} height={20} rx={10} fill={color} />
+          <text x={0} y={4} textAnchor="middle" fontSize={11} fontWeight={800} fill="#05080b" className="font-mono">
+            {kind === "hit" ? "HIT" : "MISS"}
+          </text>
+        </motion.g>
+      </g>
+    </g>
+  );
 }
 
 const CAPSULE_SEGMENT = 30;

@@ -80,14 +80,15 @@ export function Narration({
       >
         <h2 className="text-lg font-semibold text-lab-ink">Use the computer, watch the machine</h2>
         <p className="text-[14px] leading-relaxed text-lab-ink/80">
-          Open <strong className="text-lab-ink">Chromium</strong> or the{" "}
-          <strong className="text-lab-ink">Terminal</strong> from the taskbar, then search the web
-          or run <code className="font-mono text-signal">cat notes.txt</code>. Every step is traced
-          from your screen through the kernel and the hardware, out to the network.
+          Use it like any computer: search the web in <strong className="text-lab-ink">Chromium</strong>,
+          open notes.txt in the <strong className="text-lab-ink">Text Editor</strong>, play a sound in{" "}
+          <strong className="text-lab-ink">Videos</strong>, type, copy and paste. Or shut it down and
+          start it again from the Start menu.
         </p>
         <p className="text-[12.5px] leading-relaxed text-lab-muted">
-          Click any box in the machine view to see what it is. The steps are scripted for
-          teaching, not traced live, and simplified: wired Ethernet, IPv4, HTTP/2 over TLS 1.3.
+          Every action is traced from your screen through the kernel and the hardware. Click any box
+          in the machine view to see what it is. The steps are scripted for teaching, not traced
+          live, and simplified: wired Ethernet, IPv4, one example of each program.
         </p>
       </section>
     );
@@ -117,6 +118,20 @@ export function Narration({
           transition={{ duration: 0.22 }}
           className="flex min-h-0 flex-col gap-3 overflow-y-auto"
         >
+          {step.cache && (
+            <div
+              className={`flex shrink-0 items-center gap-2 rounded-md px-2.5 py-1.5 text-[12.5px] font-medium ${
+                step.cache === "hit" ? "bg-[#7ee0a1]/12 text-[#7ee0a1]" : "bg-[#ffb35c]/12 text-[#ffb35c]"
+              }`}
+            >
+              <span className="rounded bg-current/15 px-1.5 font-mono text-[11px] font-bold">
+                {step.cache === "hit" ? "HIT" : "MISS"}
+              </span>
+              {step.cache === "hit"
+                ? "In the page cache: served from RAM, the disk is never touched"
+                : "Not in the page cache: this read has to go to the SSD"}
+            </div>
+          )}
           <h2 className="text-xl font-semibold leading-tight text-lab-ink [text-wrap:balance]">
             {step.title}
           </h2>

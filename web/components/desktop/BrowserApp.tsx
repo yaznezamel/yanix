@@ -1,7 +1,8 @@
 "use client";
 
 import { AnimatePresence, motion } from "motion/react";
-import { SUGGESTED_QUERIES } from "@/lib/xray/scenarios";
+import { useRef } from "react";
+import { SUGGESTED_QUERIES } from "@/lib/xray/apps";
 import type { BrowserState } from "@/lib/xray/types";
 import styles from "../lab/lab.module.css";
 import { InfoIcon, LockIcon, SearchIcon } from "./icons";
@@ -43,8 +44,17 @@ const LEARNING_LINKS = [
 
 interface BrowserAppProps {
   state: BrowserState;
+  /** A trace is about to change the search box, so typing waits. */
+  locked: boolean;
+  canPaste: boolean;
   onSearch: (query: string) => void;
+  onDraft: (text: string) => void;
+  onKeystroke: (key: string) => void;
+  onCopy: (text: string) => void;
+  onPaste: () => void;
 }
+
+type SearchBoxProps = Omit<BrowserAppProps, "state" | "onSearch"> & { draft: string; large?: boolean };
 
 function Wordmark({ small }: { small?: boolean }) {
   return (
@@ -55,21 +65,24 @@ function Wordmark({ small }: { small?: boolean }) {
   );
 }
 
+/** The page's search box. Its text lives in the lab's state, so traces can paste into it. */
 function SearchForm({
-  initial,
-  onSearch,
+  draft,
   large,
-}: {
-  initial: string;
-  onSearch: (q: string) => void;
-  large?: boolean;
-}) {
+  locked,
+  canPaste,
+  onSubmit,
+  onDraft,
+  onKeystroke,
+  onCopy,
+  onPaste,
+}: SearchBoxProps & { onSubmit: () => void }) {
+  const tracedThisFocus = useRef(false);
   return (
     <form
       onSubmit={(e) => {
         e.preventDefault();
-        const value = new FormData(e.currentTarget).get("q");
-        if (typeof value === "string" && value.trim()) onSearch(value);
+        if (draft.trim()) onSubmit();
       }}
       className={`flex w-full items-center gap-2 rounded-full border border-white/15 bg-[#303134] px-4 ${
         large ? "h-11" : "h-8"
@@ -77,9 +90,31 @@ function SearchForm({
     >
       <SearchIcon className="size-4 shrink-0 text-white/50" />
       <input
-        key={initial}
         name="q"
-        defaultValue={initial}
+        value={draft}
+        readOnly={locked}
+        onChange={(e) => onDraft(e.target.value)}
+        onFocus={() => {
+          tracedThisFocus.current = false;
+        }}
+        onKeyDown={(e) => {
+          if (e.ctrlKey || e.metaKey || e.altKey || e.key.length !== 1 || locked) return;
+          if (!tracedThisFocus.current) {
+            tracedThisFocus.current = true;
+            onKeystroke(e.key);
+          }
+        }}
+        onCopy={(e) => {
+          e.preventDefault();
+          const el = e.currentTarget;
+          const text = el.value.slice(el.selectionStart ?? 0, el.selectionEnd ?? 0);
+          if (text.trim()) onCopy(text);
+        }}
+        onCut={(e) => e.preventDefault()}
+        onPaste={(e) => {
+          e.preventDefault();
+          if (canPaste && !locked) onPaste();
+        }}
         aria-label="Search"
         autoComplete="off"
         placeholder="Search the web"
@@ -112,7 +147,7 @@ export function BrowserTabs({ state }: { state: BrowserState }) {
   );
 }
 
-export function BrowserApp({ state, onSearch }: BrowserAppProps) {
+export function BrowserApp({ state, onSearch, ...box }: BrowserAppProps) {
   return (
     <div className="flex h-full flex-col bg-[#202124] text-white">
       <div className="flex h-10 shrink-0 items-center gap-2 bg-[#35363a] px-2">
@@ -173,7 +208,7 @@ export function BrowserApp({ state, onSearch }: BrowserAppProps) {
           <div className="flex h-full flex-col items-center justify-center gap-5 px-10 pb-8">
             <Wordmark />
             <div className="w-full max-w-[460px]">
-              <SearchForm initial={state.query} onSearch={onSearch} large />
+              <SearchForm draft={state.draft} large onSubmit={() => onSearch(state.draft)} {...box} />
             </div>
             <div className="flex flex-wrap justify-center gap-2">
               {SUGGESTED_QUERIES.map((q) => (
@@ -197,7 +232,7 @@ export function BrowserApp({ state, onSearch }: BrowserAppProps) {
             <div className="flex items-center gap-4 border-b border-white/10 pb-3">
               <Wordmark small />
               <div className="max-w-[360px] flex-1">
-                <SearchForm initial={state.query} onSearch={onSearch} />
+                <SearchForm draft={state.draft} onSubmit={() => onSearch(state.draft)} {...box} />
               </div>
             </div>
             <p className="mt-2 text-[11px] text-white/40">

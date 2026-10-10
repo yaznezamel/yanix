@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef } from "react";
-import { PROMPT } from "@/lib/xray/scenarios";
+import { PROMPT } from "@/lib/xray/apps";
 import type { TerminalState } from "@/lib/xray/types";
 import styles from "../lab/lab.module.css";
 

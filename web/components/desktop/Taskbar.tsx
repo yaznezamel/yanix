@@ -1,6 +1,7 @@
 "use client";
 
 import { useSyncExternalStore } from "react";
+import styles from "../lab/lab.module.css";
 import { EthernetIcon, SearchIcon, SpeakerIcon, StartIcon } from "./icons";
 
 // A shared clock that ticks while any component listens. On the server, and
@@ -40,6 +41,8 @@ export interface TaskbarApp {
   label: string;
   icon: React.ReactNode;
   running: boolean;
+  /** Launched, but no window yet: it appears with the app's first frame. */
+  starting: boolean;
   focused: boolean;
   tracing: boolean;
   onClick: () => void;
@@ -57,6 +60,7 @@ function Slot({
   active,
   children,
   running,
+  starting,
   focused,
   tracing,
 }: {
@@ -65,6 +69,7 @@ function Slot({
   active?: boolean;
   children: React.ReactNode;
   running?: boolean;
+  starting?: boolean;
   focused?: boolean;
   tracing?: boolean;
 }) {
@@ -78,7 +83,13 @@ function Slot({
         active || focused ? "bg-white/10" : "hover:bg-white/[0.07]"
       } ${tracing ? "ring-1 ring-signal/70 shadow-[0_0_14px_rgba(63,224,255,0.45)]" : ""}`}
     >
-      <span className="size-6">{children}</span>
+      <span className={`size-6 ${starting ? "opacity-60" : ""}`}>{children}</span>
+      {starting && (
+        <svg viewBox="0 0 16 16" className={`absolute right-0.5 top-0.5 size-3 ${styles.spin}`} aria-hidden>
+          <circle cx="8" cy="8" r="6" fill="none" stroke="rgba(255,255,255,0.2)" strokeWidth="2.5" />
+          <path d="M8 2a6 6 0 0 1 6 6" fill="none" stroke="#3fe0ff" strokeWidth="2.5" strokeLinecap="round" />
+        </svg>
+      )}
       {running && (
         <span
           className={`absolute bottom-0.5 h-[3px] rounded-full transition-all ${
@@ -113,6 +124,7 @@ export function Taskbar({ apps, startOpen, onStart }: TaskbarProps) {
             label={app.label}
             onClick={app.onClick}
             running={app.running}
+            starting={app.starting}
             focused={app.focused}
             tracing={app.tracing}
           >
