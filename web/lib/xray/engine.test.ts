@@ -8,6 +8,7 @@ import {
   machineAt,
   playerReducer,
   remapIndex,
+  readMs,
   stepMs,
   travelMs,
   visibleSteps,
@@ -16,6 +17,7 @@ import {
 } from "./engine";
 import { APPS, COLD_MACHINE, NOTES_FILE } from "./apps";
 import { buildScenario } from "./scenarios";
+import type { Step } from "./types";
 
 function run(actions: PlayerAction[], from: PlayerState = INITIAL_PLAYER): PlayerState {
   return actions.reduce(playerReducer, from);
@@ -187,6 +189,15 @@ describe("timing", () => {
     expect(travelMs(single, 1)).toBe(0);
     expect(travelMs(long, 1)).toBeGreaterThan(1000);
     expect(stepMs(long, 2)).toBeCloseTo(stepMs(long, 1) / 2);
+  });
+
+  it("leaves time to read a step at 1x: about 240 words a minute", () => {
+    const words = (n: number) => Array.from({ length: n }, () => "word").join(" ");
+    const step = (body: string): Step => ({ id: "s", phase: "file", path: ["vfs"], title: "Title", body });
+    // 51 words with the title: a little over 12 seconds.
+    expect(readMs(step(words(50)), 1)).toBe(1200 + 51 * 250);
+    expect(readMs(step("Short."), 1)).toBe(3500);
+    expect(readMs(step(words(200)), 1)).toBe(22000);
   });
 });
 

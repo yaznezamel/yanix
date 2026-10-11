@@ -368,7 +368,14 @@ export function playerReducer(state: PlayerState, action: PlayerAction): PlayerS
 }
 
 // Timing. Travel time grows with the number of hops; reading time with the
-// length of the text. Both scale with the chosen speed.
+// length of the text, at about 240 words a minute (a careful pace for
+// technical text), so a student can read each step before the next one.
+// Both scale with the chosen speed.
+
+const READ_MS_PER_WORD = 250;
+const READ_BASE_MS = 1200;
+const READ_MIN_MS = 3500;
+const READ_MAX_MS = 22000;
 
 export function travelMs(step: Step, speed: Speed): number {
   const hops = step.path.length - 1;
@@ -378,7 +385,7 @@ export function travelMs(step: Step, speed: Speed): number {
 
 export function readMs(step: Step, speed: Speed): number {
   const words = `${step.title} ${step.body}`.split(/\s+/).length;
-  return Math.min(5200, Math.max(1600, 700 + words * 48)) / speed;
+  return Math.min(READ_MAX_MS, Math.max(READ_MIN_MS, READ_BASE_MS + words * READ_MS_PER_WORD)) / speed;
 }
 
 export function stepMs(step: Step, speed: Speed): number {
