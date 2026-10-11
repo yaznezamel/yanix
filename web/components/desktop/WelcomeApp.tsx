@@ -72,7 +72,7 @@ export function WelcomeApp({ onOpen, onRestart }: WelcomeAppProps) {
           <span className="text-white/60">: shutdown, firmware, bootloader, kernel, systemd, DHCP.</span>
         </span>
       </button>
-      <p className="mt-auto text-[11px] leading-relaxed text-white/45">
+      <p className="mt-auto text-[11px] leading-relaxed text-white/65">
         Caches stay warm between runs, like on a real machine: a second read, launch or search does
         less work. Clear them from the top bar, or restart, to start cold.
       </p>

@@ -130,7 +130,7 @@ export function Desktop(props: DesktopProps) {
 
   switch (apps.screen) {
     case "off":
-      return <OffScreen onPowerOn={() => onPower("boot")} />;
+      return <OffScreen onPowerOn={() => onPower("boot")} restarting={props.restarting} />;
     case "firmware":
       return <FirmwareScreen />;
     case "bootloader":

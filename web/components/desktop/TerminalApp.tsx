@@ -76,7 +76,7 @@ export function TerminalApp({ state, onCommand }: TerminalAppProps) {
         )}
       </div>
       <div className="flex shrink-0 items-center gap-2 border-t border-white/10 bg-black/30 px-3 py-1.5 text-[11px]">
-        <span className="text-white/40">Try</span>
+        <span className="text-white/60">Try</span>
         {QUICK.map((cmd) => (
           <button
             key={cmd}

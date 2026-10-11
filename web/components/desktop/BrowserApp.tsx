@@ -222,7 +222,7 @@ export function BrowserApp({ state, onSearch, ...box }: BrowserAppProps) {
                 </button>
               ))}
             </div>
-            <p className="max-w-[420px] text-center text-[11px] leading-relaxed text-white/40">
+            <p className="max-w-[420px] text-center text-[11px] leading-relaxed text-white/60">
               Searches go to www.example.com, a name reserved for examples. The trace is real
               networking; the results page is simulated.
             </p>
@@ -235,7 +235,7 @@ export function BrowserApp({ state, onSearch, ...box }: BrowserAppProps) {
                 <SearchForm draft={state.draft} onSubmit={() => onSearch(state.draft)} {...box} />
               </div>
             </div>
-            <p className="mt-2 text-[11px] text-white/40">
+            <p className="mt-2 text-[11px] text-white/60">
               Simulated results: links to the specifications behind what you just watched.
             </p>
             <ol className="mt-3 flex flex-col gap-4">

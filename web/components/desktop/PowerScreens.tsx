@@ -10,7 +10,9 @@ import { PowerIcon, StartIcon } from "./icons";
 // firmware logo, boot menu and console are generic stand-ins for whatever a
 // real machine's firmware and distribution show.
 
-export function OffScreen({ onPowerOn }: { onPowerOn: () => void }) {
+export function OffScreen({ onPowerOn, restarting }: { onPowerOn: () => void; restarting: boolean }) {
+  // A restart powers back on by itself: the screen just stays dark for a moment.
+  if (restarting) return <div className="h-full w-full bg-black" aria-label="Restarting" />;
   return (
     <div className="flex h-full w-full flex-col items-center justify-center gap-4 bg-black text-white">
       <button
@@ -21,7 +23,7 @@ export function OffScreen({ onPowerOn }: { onPowerOn: () => void }) {
       >
         <PowerIcon className="size-9" />
       </button>
-      <p className="text-[13px] text-white/45">The computer is off. Press the power button.</p>
+      <p className="text-[13px] text-white/65">The computer is off. Press the power button.</p>
       <span className="absolute bottom-4 right-5 flex items-center gap-2 text-[10.5px] text-white/30">
         <span className="size-1.5 rounded-full bg-[#ffb35c]/70" />
         standby power

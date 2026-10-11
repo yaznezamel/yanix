@@ -74,6 +74,7 @@ export function play(media: Media, m: MachineState): Scenario {
       title: "A deadline every 21 milliseconds",
       body: "PipeWire's data thread wakes on a timer once per quantum, by default 1,024 samples: about 21 ms at 48,000 samples per second. Each time it mixes every stream (your sound and any others) and converts the result for the sound card.",
       code: [
+        { project: "pipewire", path: "src/daemon/pipewire.conf.in" },
         { project: "pipewire", path: "spa/plugins/alsa/alsa-pcm.c", symbol: "spa_alsa_write" },
         { project: "linux", path: "fs/timerfd.c" },
       ],
