@@ -1,7 +1,17 @@
 "use client";
 
 import { animate, type AnimationPlaybackControls } from "motion/react";
-import { useCallback, useEffect, useId, useImperativeHandle, useLayoutEffect, useMemo, useRef, useState } from "react";
+import {
+  useCallback,
+  useDeferredValue,
+  useEffect,
+  useId,
+  useImperativeHandle,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import { activityAt, whereIs, type Activity } from "@/lib/hardware/activity";
 import {
   FIT_MARGIN,
@@ -42,6 +52,8 @@ import type { NodeId, Step } from "@/lib/xray/types";
 import { LAYER_NAME } from "@/components/lab/palette";
 import styles from "./hardware.module.css";
 import { ArtDefs } from "./art";
+import { Fades } from "./fades";
+import { LabelLayer } from "./Labels";
 import { PartCard } from "./PartCard";
 import { PartView } from "./Parts";
 
@@ -50,7 +62,10 @@ import { PartView } from "./Parts";
 // camera.ts) moves the whole drawing with a single SVG transform, so zooming
 // and panning never re-render React. What is drawn (which parts show their
 // children) is recomputed at most once per frame, and only re-renders when it
-// changes.
+// changes, and then in the background: on a slow machine the camera keeps
+// moving while a part's insides are drawn. Per frame, the camera also places
+// the layer of names and sets the opacity of the groups that fade with the
+// zoom (fades.ts), and nothing else.
 
 type Gesture =
   | { kind: "drag"; start: Point; from: Camera; moved: boolean }
@@ -125,9 +140,14 @@ function busiest(activity: Activity): Placed[] {
 
 export function HardwareView({ step, reached, reduced, ref }: HardwareViewProps) {
   const svgRef = useRef<SVGSVGElement>(null);
+  // A clear pane over the drawing takes the pointer, so the browser never
+  // looks for the shape under it (on every frame of a zoom, it would).
+  const glassRef = useRef<HTMLDivElement>(null);
   const navRef = useRef<HTMLDivElement>(null);
   const aboutRef = useRef<HTMLDivElement>(null);
   const worldRef = useRef<SVGGElement>(null);
+  const labelsRef = useRef<SVGGElement>(null);
+  const hoverRef = useRef<SVGRectElement>(null);
   const camRef = useRef<Camera | null>(null);
   const sizeRef = useRef<Size>({ width: 0, height: 0 });
   const limitsRef = useRef<Limits | null>(null);
@@ -153,6 +173,7 @@ export function HardwareView({ step, reached, reduced, ref }: HardwareViewProps)
   // The part that holds the view's one place in the tab order.
   const [rover, setRover] = useState(TREE.root.children[0]!.id);
   const [card, setCard] = useState<CardAnchor | null>(null);
+  const [fades] = useState(() => new Fades());
   const cardRef = useRef<HTMLDivElement>(null);
   const cardSize = useRef<Size>({ width: 0, height: 0 });
   // The card as code outside a render sees it (a camera move, a pointer move).
@@ -164,9 +185,12 @@ export function HardwareView({ step, reached, reduced, ref }: HardwareViewProps)
   const detailRef = useRef(detail);
   const hintId = useId();
 
+  // What is drawn lags what should be, while a slow machine catches up.
+  const shown = useDeferredValue(detail);
+
   useEffect(() => {
-    detailRef.current = detail;
-  }, [detail]);
+    detailRef.current = shown;
+  }, [shown]);
 
   useEffect(() => {
     reducedRef.current = reduced;
@@ -200,6 +224,27 @@ export function HardwareView({ step, reached, reduced, ref }: HardwareViewProps)
     window.clearTimeout(hoverTimer.current);
     cardAt.current = next;
     setCard(next);
+  }, []);
+
+  /** Outlines the part under the pointer, as a hint that a click opens it. */
+  const markHover = useCallback((id: string | null) => {
+    if (id === hoverId.current) return;
+    hoverId.current = id;
+    const outline = hoverRef.current;
+    const node = id ? TREE.byId.get(id) : undefined;
+    if (glassRef.current) glassRef.current.style.cursor = node ? "pointer" : "";
+    if (!outline) return;
+    if (!node) {
+      outline.setAttribute("visibility", "hidden");
+      return;
+    }
+    const w = node.world;
+    outline.setAttribute("x", String(w.x));
+    outline.setAttribute("y", String(w.y));
+    outline.setAttribute("width", String(w.w));
+    outline.setAttribute("height", String(w.h));
+    outline.setAttribute("rx", String(Math.min(w.w, w.h) * 0.03));
+    outline.setAttribute("visibility", "visible");
   }, []);
 
   /** Puts the card beside its part, or beside the pointer, without a render. */
@@ -246,19 +291,21 @@ export function HardwareView({ step, reached, reduced, ref }: HardwareViewProps)
   const apply = useCallback(
     (cam: Camera, byHand: boolean) => {
       camRef.current = cam;
-      worldRef.current?.setAttribute("transform", cameraTransform(cam, sizeRef.current));
-      svgRef.current?.style.setProperty("--zoom", String(cam.k));
+      const size = sizeRef.current;
+      worldRef.current?.setAttribute("transform", cameraTransform(cam, size));
+      const names = labelsRef.current?.style;
+      names?.setProperty("--k", String(cam.k));
+      names?.setProperty("--tx", `${size.width / 2 - cam.x * cam.k}px`);
+      names?.setProperty("--ty", `${size.height / 2 - cam.y * cam.k}px`);
+      fades.zoom(cam.k);
       if (byHand) movedByHand.current = true;
       // A card follows its part; the pointer's goes, since the part under the pointer may change.
-      if (cardAt.current?.by === "pointer") {
-        hoverId.current = null;
-        showCard(null);
-      } else if (cardAt.current) {
-        placeCard();
-      }
+      if (cardAt.current?.by === "pointer") showCard(null);
+      else if (cardAt.current) placeCard();
+      markHover(null);
       refresh();
     },
-    [refresh, showCard, placeCard],
+    [refresh, showCard, placeCard, markHover, fades],
   );
 
   const stopFlight = useCallback(() => {
@@ -493,13 +540,13 @@ export function HardwareView({ step, reached, reduced, ref }: HardwareViewProps)
   // The wheel zooms around the pointer. React's onWheel is passive, so it
   // cannot stop the page from scrolling; a native listener can.
   useEffect(() => {
-    const svg = svgRef.current;
-    if (!svg) return;
+    const glass = glassRef.current;
+    if (!glass) return;
     const immersive = window.matchMedia(IMMERSIVE);
     function onWheel(e: WheelEvent) {
       const cam = camRef.current;
       const limits = limitsRef.current;
-      if (!cam || !limits || !svg) return;
+      if (!cam || !limits) return;
       // When the lab scrolls as a page, a plain wheel scrolls it; Ctrl or ⌘ (and a trackpad pinch) zooms.
       if (!immersive.matches && !e.ctrlKey && !e.metaKey) {
         showNudge("Hold Ctrl or ⌘ and scroll to zoom");
@@ -522,8 +569,8 @@ export function HardwareView({ step, reached, reduced, ref }: HardwareViewProps)
         true,
       );
     }
-    svg.addEventListener("wheel", onWheel, { passive: false });
-    return () => svg.removeEventListener("wheel", onWheel);
+    glass.addEventListener("wheel", onWheel, { passive: false });
+    return () => glass.removeEventListener("wheel", onWheel);
   }, [apply, stopFlight, viewRect, showNudge]);
 
   function local(e: React.PointerEvent): Point {
@@ -541,7 +588,7 @@ export function HardwareView({ step, reached, reduced, ref }: HardwareViewProps)
       if (cardAt.current?.by === "pointer") placeCard();
       return;
     }
-    hoverId.current = id;
+    markHover(id);
     window.clearTimeout(hoverTimer.current);
     if (id === null) {
       if (cardAt.current?.by === "pointer") {
@@ -555,25 +602,25 @@ export function HardwareView({ step, reached, reduced, ref }: HardwareViewProps)
     }
   }
 
-  function onPointerLeave(e: React.PointerEvent<SVGSVGElement>) {
+  function onPointerLeave(e: React.PointerEvent<HTMLDivElement>) {
     if (e.pointerType === "touch") return;
-    hoverId.current = null;
+    markHover(null);
     window.clearTimeout(hoverTimer.current);
     if (cardAt.current?.by === "pointer") showCard(null);
   }
 
-  function onPointerDown(e: React.PointerEvent<SVGSVGElement>) {
+  function onPointerDown(e: React.PointerEvent<HTMLDivElement>) {
     if (e.pointerType === "mouse" && e.button !== 0) return;
     const cam = camRef.current;
     if (!cam) return;
     // A click or a drag starts: no card in the way.
-    hoverId.current = null;
+    markHover(null);
     if (cardAt.current) showCard(null);
     else window.clearTimeout(hoverTimer.current);
     // Keep keyboard focus on the view (not on the part under the pointer), so
     // a click does not also count as tabbing to a part.
     e.preventDefault();
-    e.currentTarget.focus({ preventScroll: true });
+    svgRef.current?.focus({ preventScroll: true });
     e.currentTarget.setPointerCapture(e.pointerId);
     stopFlight();
     // One fresh measurement per gesture; moves reuse it.
@@ -589,7 +636,7 @@ export function HardwareView({ step, reached, reduced, ref }: HardwareViewProps)
     }
   }
 
-  function onPointerMove(e: React.PointerEvent<SVGSVGElement>) {
+  function onPointerMove(e: React.PointerEvent<HTMLDivElement>) {
     const pointers = pointersRef.current;
     if (pointers.size === 0 && e.pointerType !== "touch") hover(local(e));
     const gesture = gestureRef.current;
@@ -611,7 +658,7 @@ export function HardwareView({ step, reached, reduced, ref }: HardwareViewProps)
     }
   }
 
-  function onPointerUp(e: React.PointerEvent<SVGSVGElement>) {
+  function onPointerUp(e: React.PointerEvent<HTMLDivElement>) {
     const pointers = pointersRef.current;
     if (!pointers.has(e.pointerId)) return;
     const gesture = gestureRef.current;
@@ -689,9 +736,9 @@ export function HardwareView({ step, reached, reduced, ref }: HardwareViewProps)
   // around it that can still be reached at this zoom.
   const tabStop = useMemo(() => {
     let p = TREE.byId.get(rover);
-    while (p && !detail.interactive.has(p.id)) p = p.parent ?? undefined;
+    while (p && !shown.interactive.has(p.id)) p = p.parent ?? undefined;
     return p && p.depth > 0 ? p.id : TREE.root.children[0]!.id;
-  }, [rover, detail]);
+  }, [rover, shown]);
   const focused = TREE.byId.get(focus) ?? TREE.root;
   const trail = lineage(focused);
   const busy = step ? busiest(activity) : [];
@@ -703,16 +750,11 @@ export function HardwareView({ step, reached, reduced, ref }: HardwareViewProps)
     <div className="relative h-full w-full" onKeyDown={onKeyDown}>
       <svg
         ref={svgRef}
-        className={`h-full w-full select-none ${styles.canvas}`}
+        className={`h-full w-full select-none ${styles.view}`}
         role="group"
         tabIndex={0}
         aria-label={`Hardware view, looking at ${focused.part.label}`}
         aria-describedby={hintId}
-        onPointerDown={onPointerDown}
-        onPointerMove={onPointerMove}
-        onPointerUp={onPointerUp}
-        onPointerCancel={onPointerUp}
-        onPointerLeave={onPointerLeave}
         onBlur={() => {
           if (cardAt.current?.by === "focus") showCard(null);
         }}
@@ -721,16 +763,39 @@ export function HardwareView({ step, reached, reduced, ref }: HardwareViewProps)
         <g ref={worldRef} style={ready ? undefined : { visibility: "hidden" }}>
           <PartView
             node={TREE.root}
-            detail={detail}
+            detail={shown}
             activity={activity}
             active={step !== null}
             tabStop={tabStop}
+            fades={fades}
             onDive={dive}
             onReveal={reveal}
             onArrow={arrow}
           />
+          <rect
+            ref={hoverRef}
+            fill="none"
+            stroke="rgba(255,255,255,0.6)"
+            strokeWidth={1.5}
+            vectorEffect="non-scaling-stroke"
+            visibility="hidden"
+          />
+        </g>
+        <g ref={labelsRef} aria-hidden="true" style={ready ? undefined : { visibility: "hidden" }}>
+          <LabelLayer detail={shown} activity={activity} active={step !== null} fades={fades} />
         </g>
       </svg>
+      {/* Takes the pointer for the drawing: the view finds the part under it itself (pickAt). */}
+      <div
+        ref={glassRef}
+        aria-hidden
+        className={`absolute inset-0 select-none ${styles.canvas}`}
+        onPointerDown={onPointerDown}
+        onPointerMove={onPointerMove}
+        onPointerUp={onPointerUp}
+        onPointerCancel={onPointerUp}
+        onPointerLeave={onPointerLeave}
+      />
 
       <div
         ref={navRef}

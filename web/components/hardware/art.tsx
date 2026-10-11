@@ -17,6 +17,7 @@ import {
   stripes,
 } from "@/lib/hardware/art";
 import type { Point } from "@/lib/hardware/camera";
+import { strokeText } from "@/lib/hardware/strokeFont";
 import type { Placed } from "@/lib/hardware/tree";
 import type { Box, Cable, Decor, Look, Part } from "@/lib/hardware/types";
 
@@ -182,6 +183,41 @@ function PinnedChip({ id, body, perSide }: { id: string; body: Box; perSide: num
   );
 }
 
+/**
+ * Writing on the hardware, in a stroke font (lib/hardware/strokeFont.ts):
+ * `y` is the top of the capitals, `size` their height, and `weight` the
+ * stroke's width as a share of it.
+ */
+function Lettering({
+  text,
+  x,
+  y,
+  size,
+  color,
+  anchor = "middle",
+  weight = 0.12,
+}: {
+  text: string;
+  x: number;
+  y: number;
+  size: number;
+  color: string;
+  anchor?: "start" | "middle";
+  weight?: number;
+}) {
+  const d = once(`lettering ${text} ${x} ${y} ${size} ${anchor}`, () => strokeText(text, x, y, size, { anchor }));
+  return (
+    <path
+      d={d}
+      fill="none"
+      stroke={color}
+      strokeWidth={size * weight}
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    />
+  );
+}
+
 function rect(b: Box) {
   return { x: b.x, y: b.y, width: b.w, height: b.h };
 }
@@ -224,17 +260,9 @@ const DRAW: Record<Look, Draw> = {
             {...LINE}
           />
           <path d={`M${w * 0.12} ${h * 0.88}h${w * 0.07}l${-w * 0.07} ${-h * 0.07}z`} fill="#868d96" />
-          <g fill="#646b74" textAnchor="middle" letterSpacing="0.1em">
-            <text x={w / 2} y={h * 0.53} fontSize={w * 0.11} fontWeight={700}>
-              YANIX
-            </text>
-            <text x={w / 2} y={h * 0.62} fontSize={w * 0.045}>
-              TEACHING CPU
-            </text>
-            <text x={w / 2} y={h * 0.69} fontSize={w * 0.034} fill="#757c85">
-              4 CORES · ILLUSTRATIVE
-            </text>
-          </g>
+          <Lettering text="YANIX" x={w / 2} y={h * 0.44} size={w * 0.08} color="#646b74" weight={0.16} />
+          <Lettering text="TEACHING CPU" x={w / 2} y={h * 0.58} size={w * 0.032} color="#646b74" />
+          <Lettering text="4 CORES · ILLUSTRATIVE" x={w / 2} y={h * 0.655} size={w * 0.024} color="#757c85" />
         </>
       ),
     };
@@ -700,9 +728,7 @@ function decorArt(decor: Decor, w: number, h: number): ReactNode {
           <circle cx={w / 2} cy={h / 2} r={w * 0.5} fill="#1b1e22" />
           <circle cx={w / 2} cy={h / 2} r={w * 0.42} fill="url(#hw-metal)" stroke="#7f8790" {...LINE} />
           <circle cx={w / 2} cy={h / 2} r={w * 0.34} fill="none" stroke="#a0a7af" {...LINE} />
-          <text x={w / 2} y={h / 2 + w * 0.045} textAnchor="middle" fontSize={w * 0.13} fill="#5d646c">
-            CR2032
-          </text>
+          <Lettering text="CR2032" x={w / 2} y={h / 2 - w * 0.055} size={w * 0.11} color="#5d646c" />
         </>
       );
     case "sata":
@@ -724,16 +750,12 @@ function decorArt(decor: Decor, w: number, h: number): ReactNode {
         </>
       );
     case "silk": {
-      const [first, ...rest] = (decor.text ?? "").split("\n");
+      const [first = "", ...rest] = (decor.text ?? "").split("\n");
       return (
-        <g fill="#d9e2dc" fillOpacity={0.5} letterSpacing="0.1em" className="font-mono">
-          <text y={h * 0.5} fontSize={h * 0.45} fontWeight={700}>
-            {first}
-          </text>
+        <g opacity={0.5}>
+          <Lettering text={first} x={0} y={h * 0.08} size={h * 0.36} color="#d9e2dc" anchor="start" weight={0.14} />
           {rest.map((line, i) => (
-            <text key={i} y={h * (0.82 + i * 0.25)} fontSize={h * 0.2}>
-              {line}
-            </text>
+            <Lettering key={i} text={line} x={0} y={h * (0.62 + i * 0.25)} size={h * 0.16} color="#d9e2dc" anchor="start" />
           ))}
         </g>
       );

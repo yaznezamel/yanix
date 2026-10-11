@@ -1,14 +1,13 @@
-/* The hardware view: a zoomable SVG. Labels and line widths stay the same size
-   on screen at any zoom: the camera sets --zoom on the SVG, and labels scale by
-   1 / --zoom while lines use vector-effect: non-scaling-stroke. */
+/* The hardware view: a zoomable SVG. Names and line widths stay the same size
+   on screen at any zoom: names are in a layer the zoom does not scale
+   (Labels.tsx), and lines use vector-effect: non-scaling-stroke. */
 
-/* Below the wide layout the lab scrolls as a page: one finger scrolls it and
-   two fingers move or zoom the drawing. In the wide layout the drawing takes
-   every gesture. */
+/* The pane over the drawing that takes the pointer. Below the wide layout the
+   lab scrolls as a page: one finger scrolls it and two fingers move or zoom
+   the drawing. In the wide layout the drawing takes every gesture. */
 .canvas {
   cursor: grab;
   touch-action: pan-x pan-y;
-  outline: none;
 }
 
 @media (width >= 80rem) {
@@ -21,7 +20,11 @@
   cursor: grabbing;
 }
 
-.canvas:focus-visible {
+.view {
+  outline: none;
+}
+
+.view:focus-visible {
   outline: 2px solid var(--color-signal);
   outline-offset: -2px;
 }
@@ -31,22 +34,12 @@
 }
 
 .part {
-  cursor: pointer;
   outline: none;
-}
-
-/* An unlit part's outline is faint over its drawing; the pointer shows which part a click would open. */
-.part:hover .idle {
-  stroke: rgba(255, 255, 255, 0.55);
 }
 
 .part:focus-visible .box {
   stroke: #ffffff;
   stroke-width: 2.5px;
-}
-
-.spot {
-  pointer-events: none;
 }
 
 /* A dark outline under a name that sits on a drawing rather than on a tag. */
@@ -55,11 +48,6 @@
   stroke: #070a0d;
   stroke-width: 3px;
   stroke-linejoin: round;
-}
-
-.label,
-.label * {
-  pointer-events: none;
 }
 
 .pulse {

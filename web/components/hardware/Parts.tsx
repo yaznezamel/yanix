@@ -3,47 +3,20 @@
 import { memo } from "react";
 import { SIGNAL, alpha } from "@/components/lab/palette";
 import type { Activity } from "@/lib/hardware/activity";
-import {
-  isVertical,
-  labelWidth,
-  linkShape,
-  opennessCss,
-  type Detail,
-  type LabelFit,
-  type Placed,
-} from "@/lib/hardware/tree";
-import type { Box, Frame, Link } from "@/lib/hardware/types";
+import { linkShape, type Detail, type Placed } from "@/lib/hardware/tree";
+import type { Box, Link } from "@/lib/hardware/types";
 import { BoardArt, DecorArt, Preview, WireArt, partArt } from "./art";
+import type { Fades } from "./fades";
 import styles from "./hardware.module.css";
+import { inParent, partState, type PartState } from "./state";
 
 // How each part, wire and frame of the hardware view is drawn: the drawing of
 // the hardware (art.tsx), and over it an outline that lights up with the
-// trace, and the part's name. Sizes are in world units, except names: they are
-// scaled by 1 / --zoom, so they stay the same size on screen. Which name a
-// part shows, and at what size, comes from the level of detail
-// (lib/hardware/tree.ts).
-
-type PartState = "idle" | "current" | "touched" | "dim";
-
-const INK = "#e8edf2";
-const MUTED = "#9aa5b1";
-/** The backing behind a part's name, so it reads over any drawing. */
-const TAG = "rgba(8, 11, 15, 0.76)";
-
-/** Counter-scales a group placed at a world point, so its contents are in screen pixels. */
-function screenSized(x: number, y: number, extra = ""): React.CSSProperties {
-  return { transform: `translate(${x}px, ${y}px) scale(calc(1 / var(--zoom)))${extra}` };
-}
-
-/** A box in a part's inner coordinates, in world coordinates. */
-function inParent(parent: Placed, box: Box): Box {
-  return {
-    x: parent.world.x + box.x * parent.unit,
-    y: parent.world.y + box.y * parent.unit,
-    w: box.w * parent.unit,
-    h: box.h * parent.unit,
-  };
-}
+// trace. Names are drawn in a layer of their own (Labels.tsx). Parts are
+// focusable for the keyboard, but the pointer never reaches them: a clear pane
+// over the drawing takes it, and the view finds the part under the pointer
+// itself (pickAt), far cheaper than the browser testing thousands of shapes
+// on every frame of a zoom.
 
 interface PartViewProps {
   node: Placed;
@@ -52,6 +25,7 @@ interface PartViewProps {
   active: boolean;
   /** The one part in the tab order; arrow keys move between parts. */
   tabStop: string;
+  fades: Fades;
   onDive: (p: Placed) => void;
   onReveal: (p: Placed) => void;
   onArrow: (p: Placed, key: string) => boolean;
@@ -86,9 +60,9 @@ function activityKey(activity: Activity, node: Placed): string {
 }
 
 // A part is drawn again only when something about it, or a part inside it,
-// changed: zooming changes a few names at a time, not the whole drawing.
+// changed: zooming opens a few parts at a time, not the whole drawing.
 function samePart(a: PartViewProps, b: PartViewProps): boolean {
-  if (a.node !== b.node || a.active !== b.active) return false;
+  if (a.node !== b.node || a.active !== b.active || a.fades !== b.fades) return false;
   if (a.onDive !== b.onDive || a.onReveal !== b.onReveal || a.onArrow !== b.onArrow) return false;
   const id = a.node.id;
   if (a.detail !== b.detail && a.detail.keys.get(id) !== b.detail.keys.get(id)) return false;
@@ -103,21 +77,14 @@ export const PartView = memo(function PartView({
   activity,
   active,
   tabStop,
+  fades,
   onDive,
   onReveal,
   onArrow,
 }: PartViewProps) {
   const open = detail.open.has(node.id);
-  let state: PartState = "idle";
-  if (active && node.depth > 0) {
-    if (activity.current.has(node.id)) state = "current";
-    else if (activity.touched.has(node.id)) state = "touched";
-    // An unused part dims if its parent is in use (or it is a top-level part);
-    // inside a part that is already dimmed, it simply follows its opacity.
-    else if (node.depth === 1 || (node.parent !== null && activity.touched.has(node.parent.id))) state = "dim";
-  }
+  const state = partState(node, activity, active);
   const reachable = node.depth === 0 || detail.interactive.has(node.id);
-  const childrenReachable = node.children.some((c) => detail.interactive.has(c.id));
 
   return (
     <g className={styles.group} style={{ opacity: state === "dim" ? 0.45 : 1 }}>
@@ -128,19 +95,16 @@ export const PartView = memo(function PartView({
           open={open}
           full={detail.full.has(node.id)}
           drawn={detail.drawn.has(node.id)}
-          fit={detail.labels.get(node.id)}
           reachable={reachable}
           tabbable={reachable && node.id === tabStop}
+          fades={fades}
           onDive={onDive}
           onReveal={onReveal}
           onArrow={onArrow}
         />
       )}
       {open && (
-        <g
-          style={node.depth === 0 ? undefined : { opacity: opennessCss(node) }}
-          pointerEvents={childrenReachable ? undefined : "none"}
-        >
+        <g ref={node.depth > 0 ? fades.track(node.id, "children") : undefined}>
           {node.part.frames?.map((frame) =>
             frame.kind === "board" ? (
               <BoardArt key={frame.label} box={inParent(node, frame.box)} />
@@ -151,20 +115,8 @@ export const PartView = memo(function PartView({
           {node.part.decor?.map((decor, i) => (
             <DecorArt key={i} decor={decor} box={inParent(node, decor.box)} />
           ))}
-          {node.part.links?.map((link) => {
-            const id = `${node.id}:${link.id}`;
-            return (
-              <LinkView
-                key={link.id}
-                parent={node}
-                link={link}
-                lit={activity.links.has(id)}
-                labelled={detail.linkLabels.has(id)}
-              />
-            );
-          })}
-          {node.part.frames?.map((frame) => (
-            <FrameLegend key={frame.label} box={inParent(node, frame.box)} label={frame.label} />
+          {node.part.links?.map((link) => (
+            <LinkView key={link.id} parent={node} link={link} lit={activity.links.has(`${node.id}:${link.id}`)} />
           ))}
           {node.children.map((child) => (
             <PartView
@@ -174,6 +126,7 @@ export const PartView = memo(function PartView({
               activity={activity}
               active={active}
               tabStop={tabStop}
+              fades={fades}
               onDive={onDive}
               onReveal={onReveal}
               onArrow={onArrow}
@@ -191,9 +144,9 @@ function PartBox({
   open,
   full,
   drawn,
-  fit,
   reachable,
   tabbable,
+  fades,
   onDive,
   onReveal,
   onArrow,
@@ -204,18 +157,17 @@ function PartBox({
   full: boolean;
   /** On screen or near it; otherwise only the outline is drawn, for keyboard focus. */
   drawn: boolean;
-  fit: LabelFit | undefined;
   reachable: boolean;
   tabbable: boolean;
+  fades: Fades;
   onDive: (p: Placed) => void;
   onReveal: (p: Placed) => void;
   onArrow: (p: Placed, key: string) => boolean;
 }) {
   const { world: w, part } = node;
   const lit = state === "current" || state === "touched";
-  const radius = Math.min(w.w, w.h) * 0.03;
   const art = drawn ? partArt(node) : null;
-  const box = { x: w.x, y: w.y, width: w.w, height: w.h, rx: radius };
+  const box = { x: w.x, y: w.y, width: w.w, height: w.h, rx: Math.min(w.w, w.h) * 0.03 };
 
   return (
     <g
@@ -233,6 +185,8 @@ function PartBox({
           e.preventDefault();
         }
       }}
+      // Only assistive technology clicks a part: the pointer never hits one.
+      onClick={() => onDive(node)}
       onFocus={(e) => {
         if (e.currentTarget.matches(":focus-visible")) onReveal(node);
       }}
@@ -244,25 +198,19 @@ function PartBox({
           {/* What hides the children: a lid fades out as they fade in; a preview of them stays until they are fully shown. */}
           {!full &&
             (art.cover ? (
-              <g style={open ? { opacity: `calc(1 - ${opennessCss(node)})` } : undefined}>{art.cover}</g>
+              <g ref={fades.track(node.id, "cover")}>{art.cover}</g>
             ) : node.children.length > 0 ? (
               <Preview node={node} />
             ) : null)}
         </g>
       )}
       {state === "current" && (
-        <rect
-          className={styles.pulse}
-          {...box}
-          fill="none"
-          stroke={SIGNAL}
-          vectorEffect="non-scaling-stroke"
-        />
+        <rect className={styles.pulse} {...box} fill="none" stroke={SIGNAL} vectorEffect="non-scaling-stroke" />
       )}
       <rect
-        className={`${styles.box} ${lit ? "" : styles.idle}`}
+        className={styles.box}
         {...box}
-        fill={state === "current" ? alpha(SIGNAL, 0.16) : lit ? alpha(SIGNAL, 0.08) : "rgba(0,0,0,0)"}
+        fill={state === "current" ? alpha(SIGNAL, 0.16) : lit ? alpha(SIGNAL, 0.08) : "none"}
         stroke={state === "current" ? SIGNAL : lit ? alpha(SIGNAL, 0.6) : "rgba(255,255,255,0.12)"}
         strokeWidth={state === "current" ? 2.4 : lit ? 1.6 : 1}
         vectorEffect="non-scaling-stroke"
@@ -270,7 +218,6 @@ function PartBox({
       {/* Flashed by "Show in Hardware", to point out the part. */}
       <rect
         data-spot
-        className={styles.spot}
         {...box}
         fill="none"
         stroke="#ffffff"
@@ -278,64 +225,15 @@ function PartBox({
         opacity={0}
         vectorEffect="non-scaling-stroke"
       />
-      {drawn && fit && <PartLabel node={node} fit={fit} open={open} />}
     </g>
   );
 }
 
-function PartLabel({ node, fit, open }: { node: Placed; fit: LabelFit; open: boolean }) {
-  const { world: w, part } = node;
-  if (fit.place === "none") return null;
-  if (fit.place === "below") {
-    return (
-      <g className={styles.label} style={screenSized(w.x + w.w / 2, w.y + w.h)}>
-        <text textAnchor="middle" fontSize={fit.size} fontWeight={600} fill={INK} className={styles.halo}>
-          {fit.lines.map((line, i) => (
-            <tspan key={i} x={0} y={fit.size + 3 + i * (fit.size + 2)}>
-              {line}
-            </tspan>
-          ))}
-        </text>
-      </g>
-    );
-  }
-  // A tall, thin part (a RAM stick) has its name written up its length.
-  const vertical = isVertical(w);
-  const style = vertical ? screenSized(w.x, w.y + w.h, " rotate(-90deg)") : screenSized(w.x, w.y);
-  const baseline = Math.round(fit.size * 1.15 + 3);
-  const sub = fit.sub && !open ? part.sub : undefined;
-  const width = Math.max(labelWidth(fit.text, fit.size), sub ? sub.length * 6.1 + 8 : 0) + 1;
-  const bottom = sub ? baseline + 18 : baseline + Math.round(fit.size * 0.3) + 3;
-  return (
-    <g className={styles.label} style={style}>
-      <rect x={3} y={3} width={width} height={bottom - 3} rx={3} fill={TAG} />
-      <text x={8} y={baseline} fontSize={fit.size} fontWeight={600} fill={INK}>
-        {fit.text}
-      </text>
-      {sub && (
-        <text x={8} y={baseline + 14} fontSize={10} fill={MUTED} className="font-mono">
-          {sub}
-        </text>
-      )}
-    </g>
-  );
-}
-
-function LinkView({
-  parent,
-  link,
-  lit,
-  labelled,
-}: {
-  parent: Placed;
-  link: Link;
-  lit: boolean;
-  labelled: boolean;
-}) {
-  const { points, label } = linkShape(parent, link);
+function LinkView({ parent, link, lit }: { parent: Placed; link: Link; lit: boolean }) {
+  const { points } = linkShape(parent, link);
   const d = points.map((p, i) => `${i === 0 ? "M" : "L"} ${p.x} ${p.y}`).join(" ");
   return (
-    <g pointerEvents="none">
+    <g>
       <WireArt points={points} cable={link.cable} />
       {lit && (
         <>
@@ -351,20 +249,6 @@ function LinkView({
           />
           <path d={d} fill="none" stroke={SIGNAL} strokeWidth={2.2} strokeLinejoin="round" vectorEffect="non-scaling-stroke" />
         </>
-      )}
-      {labelled && (
-        <g className={styles.label} style={screenSized(label.x, label.y)}>
-          <text
-            x={label.vertical ? (label.left ? -7 : 7) : 0}
-            y={label.vertical ? 4 : 14}
-            textAnchor={label.vertical ? (label.left ? "end" : "start") : "middle"}
-            fontSize={10}
-            fill={lit ? SIGNAL : "rgba(232,237,242,0.78)"}
-            className={`font-mono ${styles.halo}`}
-          >
-            {link.label}
-          </text>
-        </g>
       )}
     </g>
   );
@@ -383,21 +267,6 @@ function FrameOutline({ box, unit }: { box: Box; unit: number }) {
       stroke="rgba(255,255,255,0.12)"
       strokeDasharray="6 6"
       vectorEffect="non-scaling-stroke"
-      pointerEvents="none"
     />
-  );
-}
-
-/** The frame's name on its top edge, like a legend, over any wire that runs under it. */
-function FrameLegend({ box, label }: { box: Box; label: Frame["label"] }) {
-  const text = label.toUpperCase();
-  const width = text.length * 7.8 + 12;
-  return (
-    <g className={styles.label} style={screenSized(box.x, box.y)}>
-      <rect x={14} y={-8} width={width} height={16} rx={3} fill="#0e1217" />
-      <text x={20} y={4} fontSize={10.5} letterSpacing="0.14em" fill="rgba(255,255,255,0.6)" className="font-mono">
-        {text}
-      </text>
-    </g>
   );
 }

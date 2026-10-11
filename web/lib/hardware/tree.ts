@@ -220,19 +220,6 @@ export function fullyOpenZoom(p: Placed): number {
   return ((OPEN_FROM + OPEN_SPAN) * p.openAt) / p.world.w;
 }
 
-/** The children's opacity as CSS, so it follows the --zoom variable without a React render. */
-export function opennessCss(p: Placed): string {
-  if (p.children.length === 0) return "0";
-  if (p.depth === 0) return "1";
-  const from = OPEN_FROM * p.openAt;
-  const span = OPEN_SPAN * p.openAt;
-  return `clamp(0, calc((var(--zoom) * ${round(p.world.w)} - ${round(from)}) / ${round(span)}), 1)`;
-}
-
-function round(n: number): number {
-  return Math.round(n * 1000) / 1000;
-}
-
 export interface Detail {
   /** Parts whose children are drawn. */
   open: Set<string>;
@@ -251,8 +238,9 @@ export interface Detail {
   /** Links, as "parentId:linkId", whose labels fit. */
   linkLabels: Set<string>;
   /**
-   * For each part, a signature of everything above for it and the parts
-   * inside it: a part whose key did not change need not be drawn again.
+   * For each part, a signature of how it and the parts inside it are drawn
+   * (names aside, which have a layer of their own): a part whose key did not
+   * change need not be drawn again.
    */
   keys: Map<string, string>;
   /** Changes whenever anything above does, so a frame that changes nothing renders nothing. */
@@ -277,17 +265,19 @@ export function levelOfDetail(tree: Tree, cam: Camera, view: Size): Detail {
   const linkLabels = new Set<string>();
   const keys = new Map<string, string>();
 
-  /** Visits an open part's children; returns the signature of what is drawn inside it ("" when closed). */
+  const names: string[] = [];
+
+  /** Visits an open part's children; returns the key of what is drawn inside it ("" when closed). */
   function visit(p: Placed, reachable: boolean): string {
     const o = openness(p, cam.k);
     if (o <= 0 || !intersects(p.world, margin)) return "";
     open.add(p.id);
     if (o >= 1) full.add(p.id);
-    const signature = [o >= 1 ? "[=" : "["];
+    const inside = [o >= 1 ? "[=" : "["];
     for (const link of p.part.links ?? []) {
       if (!linkLabelFits(p, link, cam.k)) continue;
       linkLabels.add(`${p.id}:${link.id}`);
-      signature.push(link.id);
+      names.push(link.id);
     }
     const childrenReachable = reachable && o >= 0.5;
     for (const child of p.children) {
@@ -296,16 +286,17 @@ export function levelOfDetail(tree: Tree, cam: Camera, view: Size): Detail {
       if (near) drawn.add(child.id);
       const fit = labelFit(child, cam.k);
       labels.set(child.id, fit);
-      const key = `${child.part.key}${childrenReachable ? "!" : ""}${near ? "" : "~"}${fitKey(fit)}${visit(child, childrenReachable)}`;
+      names.push(`${child.id}${fitKey(fit)}`);
+      const key = `${child.part.key}${childrenReachable ? "!" : ""}${near ? "" : "~"}${visit(child, childrenReachable)}`;
       keys.set(child.id, key);
-      signature.push(key);
+      inside.push(key);
     }
-    signature.push("]");
-    return signature.join(" ");
+    inside.push("]");
+    return inside.join(" ");
   }
-  const signature = visit(tree.root, true);
-  keys.set(tree.root.id, signature);
-  return { open, full, drawn, interactive, labels, linkLabels, keys, signature };
+  const drawing = visit(tree.root, true);
+  keys.set(tree.root.id, drawing);
+  return { open, full, drawn, interactive, labels, linkLabels, keys, signature: `${drawing} | ${names.join(" ")}` };
 }
 
 /** The share of the view a part covers, from 0 to 1. */

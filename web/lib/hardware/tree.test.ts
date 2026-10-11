@@ -10,7 +10,6 @@ import {
   levelOfDetail,
   limitsFor,
   openness,
-  opennessCss,
   pickAt,
   refocus,
   unionBox,
@@ -49,7 +48,6 @@ describe("hardware tree", () => {
     // Fully open, a core is wide enough for its label.
     const k = (cpu.openAt * 1.15) / cpu.world.w;
     expect(part("cpu.core0").world.w * k).toBeGreaterThanOrEqual(labelWidth("Core 0"));
-    expect(opennessCss(cpu)).toMatch(/^clamp\(0, calc\(\(var\(--zoom\) \* 260 - [\d.]+\) \/ [\d.]+\), 1\)$/);
   });
 
   it("shows the whole computer first, with every top-level part clickable", () => {
@@ -149,7 +147,7 @@ describe("hardware tree", () => {
     const at = (k: number) => levelOfDetail(TREE, { ...centre("cpu.core0"), k }, view);
     const before = at(3.2);
     const after = at(3.5);
-    expect(before.keys.get(TREE.root.id)).toBe(before.signature);
+    expect(before.signature.startsWith(before.keys.get(TREE.root.id)!)).toBe(true);
     // Core 0 starts to show its units; the L3 cache next to it looks the same.
     expect(after.open.has("cpu.core0")).toBe(true);
     expect(before.open.has("cpu.core0")).toBe(false);
