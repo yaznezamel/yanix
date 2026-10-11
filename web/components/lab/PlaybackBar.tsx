@@ -89,7 +89,7 @@ export function PlaybackBar({
   return (
     <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
       <div className="flex items-center gap-1.5">
-        <IconButton label="Restart" onClick={() => onAction("restart")} disabled={idle}>
+        <IconButton label="Replay trace" onClick={() => onAction("restart")} disabled={idle}>
           <svg viewBox="0 0 16 16" className="size-4" aria-hidden>
             <path d="M3 3v4h4" fill="none" stroke="currentColor" strokeWidth="1.6" />
             <path d="M3.6 6.5A5 5 0 1 1 4 11" fill="none" stroke="currentColor" strokeWidth="1.6" />
@@ -102,7 +102,7 @@ export function PlaybackBar({
           </svg>
         </IconButton>
         <IconButton
-          label={playing ? "Pause" : "Play"}
+          label={playing ? "Pause trace" : "Play trace"}
           onClick={() => onAction("toggle")}
           disabled={idle}
           primary
@@ -308,7 +308,7 @@ function Timeline({
               className="h-3 min-w-[4px] flex-1 rounded-[3px]"
               style={{
                 background: LAYER_HEX[layer],
-                opacity: state === "todo" ? 0.22 : state === "done" ? 0.6 : 1,
+                opacity: state === "todo" ? 0.35 : state === "done" ? 0.65 : 1,
               }}
             />
           );

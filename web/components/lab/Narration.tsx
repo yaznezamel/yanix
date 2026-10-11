@@ -15,6 +15,49 @@ interface NarrationProps {
   onCloseInspector: () => void;
 }
 
+/** Watches a scrolling text box: is there more below the fold? */
+function useMoreCue() {
+  const scroller = useRef<HTMLDivElement | null>(null);
+  const [more, setMore] = useState(false);
+  const watch = useCallback((el: HTMLDivElement | null) => {
+    scroller.current = el;
+    if (!el) return;
+    const update = () => setMore(el.scrollHeight - el.scrollTop - el.clientHeight > 6);
+    update();
+    const observer = new ResizeObserver(update);
+    observer.observe(el);
+    el.addEventListener("scroll", update, { passive: true });
+    return () => {
+      observer.disconnect();
+      el.removeEventListener("scroll", update);
+    };
+  }, []);
+  const scrollDown = useCallback(() => {
+    const el = scroller.current;
+    if (el) el.scrollBy({ top: el.clientHeight * 0.75, behavior: "smooth" });
+  }, []);
+  return { watch, more, scrollDown };
+}
+
+/** A fade and a "More" button over the bottom of a text that scrolls. */
+function MoreCue({ onMore }: { onMore: () => void }) {
+  return (
+    <>
+      <div
+        aria-hidden
+        className="pointer-events-none absolute inset-x-0 bottom-0 h-12 bg-gradient-to-t from-lab-panel to-transparent"
+      />
+      <button
+        type="button"
+        onClick={onMore}
+        className="absolute right-0 bottom-0 rounded-full border border-lab-line bg-lab-panel2 px-2.5 py-1 text-[11.5px] text-lab-ink shadow-md hover:border-white/30"
+      >
+        More ↓
+      </button>
+    </>
+  );
+}
+
 function CodeChip({ code }: { code: CodeRef }) {
   return (
     <span className="inline-flex max-w-full items-center gap-1.5 rounded border border-lab-line bg-black/30 px-2 py-0.5 font-mono text-[11px] text-lab-ink/85">
@@ -73,12 +116,18 @@ export function Narration({
     );
   }
 
-  if (!step || !position) {
-    return (
-      <section
-        aria-label="Story"
-        className="flex h-full flex-col justify-center-safe gap-2.5 overflow-y-auto p-4"
-      >
+  if (!step || !position) return <Intro />;
+
+  return (
+    <StepStory step={step} next={next} position={position} scenarioTitle={scenarioTitle} />
+  );
+}
+
+function Intro() {
+  const { watch, more, scrollDown } = useMoreCue();
+  return (
+    <section aria-label="Story" className="relative flex h-full min-h-0 flex-col p-4">
+      <div ref={watch} className="flex min-h-0 flex-1 flex-col justify-center-safe gap-2.5 overflow-y-auto">
         <h2 className="text-lg font-semibold text-lab-ink">Use the computer, watch the machine</h2>
         <p className="text-[14px] leading-relaxed text-lab-ink/80">
           Use it like any computer: search the web in <strong className="text-lab-ink">Chromium</strong>,
@@ -87,16 +136,20 @@ export function Narration({
           start it again from the Start menu.
         </p>
         <p className="text-[12.5px] leading-relaxed text-lab-muted">
-          Every action is traced from your screen through the kernel and the hardware. Click any box
-          in the machine view to see what it is. The steps are scripted for teaching, not traced
-          live, and simplified: wired Ethernet, IPv4, one example of each program.
+          Every action is traced from your screen through the kernel and the hardware. Next to the
+          screen, <strong className="font-medium text-lab-ink/90">Software path</strong> shows the code
+          each step runs through, and <strong className="font-medium text-lab-ink/90">Hardware</strong>{" "}
+          shows the parts of the computer it uses: zoom into the CPU to see its cores. Click any box to
+          learn what it is. The steps are scripted for teaching, not traced live, and simplified: wired
+          Ethernet, IPv4, one example of each program.
         </p>
-      </section>
-    );
-  }
-
-  return (
-    <StepStory step={step} next={next} position={position} scenarioTitle={scenarioTitle} />
+      </div>
+      {more && (
+        <div className="absolute inset-x-4 bottom-4">
+          <MoreCue onMore={scrollDown} />
+        </div>
+      )}
+    </section>
   );
 }
 
@@ -112,22 +165,8 @@ function StepStory({
   position: { index: number; total: number };
   scenarioTitle: string | null;
 }) {
-  const scroller = useRef<HTMLDivElement | null>(null);
-  const [more, setMore] = useState(false);
-  // Watch the scrolling text (a new element for every step): is anything below the fold?
-  const watch = useCallback((el: HTMLDivElement | null) => {
-    scroller.current = el;
-    if (!el) return;
-    const update = () => setMore(el.scrollHeight - el.scrollTop - el.clientHeight > 6);
-    update();
-    const observer = new ResizeObserver(update);
-    observer.observe(el);
-    el.addEventListener("scroll", update, { passive: true });
-    return () => {
-      observer.disconnect();
-      el.removeEventListener("scroll", update);
-    };
-  }, []);
+  // The scrolling text is a new element for every step; the cue follows it.
+  const { watch, more, scrollDown } = useMoreCue();
   const layers = Array.from(new Set(step.path.map((id) => NODES[id].layer)));
 
   return (
@@ -209,24 +248,7 @@ function StepStory({
           )}
         </motion.div>
       </AnimatePresence>
-      {more && (
-        <>
-          <div
-            aria-hidden
-            className="pointer-events-none absolute inset-x-0 bottom-0 h-12 bg-gradient-to-t from-lab-panel to-transparent"
-          />
-          <button
-            type="button"
-            onClick={() => {
-              const el = scroller.current;
-              if (el) el.scrollBy({ top: el.clientHeight * 0.75, behavior: "smooth" });
-            }}
-            className="absolute right-0 bottom-0 rounded-full border border-lab-line bg-lab-panel2 px-2.5 py-1 text-[11.5px] text-lab-ink shadow-md hover:border-white/30"
-          >
-            More ↓
-          </button>
-        </>
-      )}
+      {more && <MoreCue onMore={scrollDown} />}
       </div>
       {next && (
         <p className="mt-auto shrink-0 truncate text-[12px] text-lab-muted">

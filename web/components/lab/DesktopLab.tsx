@@ -21,6 +21,7 @@ import type { AppId, Detail, MachineState, NodeId, ScenarioRequest, TermLine } f
 import { Narration } from "./Narration";
 import { PacketPanel } from "./PacketPanel";
 import { PlaybackBar } from "./PlaybackBar";
+import { QuickActions } from "./QuickActions";
 import { XRayMap } from "./XRayMap";
 import styles from "./lab.module.css";
 import { LAYER_HEX, LAYER_NAME } from "./palette";
@@ -191,7 +192,6 @@ export function DesktopLab() {
   }, []);
 
   function start(action: PlayerAction) {
-    setLayoutOverride(null);
     setSelected(null);
     // Like a page load, a new trace takes focus off the button that started
     // it, so Space then pauses the trace instead of pressing the button again.
@@ -212,6 +212,12 @@ export function DesktopLab() {
 
   function request(req: ScenarioRequest) {
     start({ type: "start", request: req });
+  }
+
+  /** Opening a box's details pauses the trace, so the story does not run on unseen. */
+  function handleSelect(id: NodeId) {
+    setSelected(id);
+    if (status === "playing") dispatch({ type: "pause" });
   }
 
   /** Dragging the timeline pauses the trace, and lets it play on when you let go. */
@@ -261,11 +267,12 @@ export function DesktopLab() {
           <span className="font-mono text-[11px] uppercase tracking-[0.14em] text-lab-muted">Desktop lab</span>
           <div className="ml-auto flex flex-wrap items-center gap-2">
             <div className="hidden xl:block">
-              <Segmented
+              <Segmented<LayoutMode | "auto">
                 label="Layout"
-                value={layout}
-                onChange={setLayoutOverride}
+                value={layoutOverride ?? "auto"}
+                onChange={(value) => setLayoutOverride(value === "auto" ? null : value)}
                 options={[
+                  { value: "auto", label: "Auto" },
                   { value: "screen", label: "Screen" },
                   { value: "split", label: "Split" },
                   { value: "machine", label: "Machine" },
@@ -297,7 +304,9 @@ export function DesktopLab() {
               <button
                 type="button"
                 onClick={() => dispatch({ type: "clearCaches" })}
-                className="ml-1 rounded px-1.5 py-0.5 text-[11px] text-lab-ink/80 hover:bg-white/10"
+                aria-label="Clear caches"
+                title="Forget what the machine has cached, so the next run starts cold"
+                className="ml-1 min-h-6 rounded px-2 text-[11px] text-lab-ink/80 hover:bg-white/10"
               >
                 Clear
               </button>
@@ -307,7 +316,7 @@ export function DesktopLab() {
 
         <main className="flex min-h-0 flex-1 flex-col gap-3 p-3 xl:flex-row">
           <div
-            className={`flex min-h-0 min-w-0 flex-col gap-3 transition-[flex-basis] duration-700 ease-[cubic-bezier(0.2,0.8,0.2,1)] xl:shrink-0 xl:basis-(--left) ${styles.column}`}
+            className={`flex min-h-0 min-w-0 flex-col gap-3 transition-[flex-basis] duration-700 ease-[cubic-bezier(0.2,0.8,0.2,1)] motion-reduce:transition-none xl:shrink-0 xl:basis-(--left) ${styles.column}`}
             style={
               { "--left": LEFT_BASIS[layout], "--reserve": PANELS_RESERVE[layout] } as React.CSSProperties
             }
@@ -343,6 +352,7 @@ export function DesktopLab() {
                 />
               </VirtualScreen>
             </div>
+            <QuickActions apps={apps} busy={active} onRequest={request} onCommand={handleCommand} />
             <div
               className={`grid min-h-0 flex-1 gap-3 ${
                 layout === "machine"
@@ -368,12 +378,12 @@ export function DesktopLab() {
             </div>
           </div>
 
-          <div className="relative min-h-[540px] min-w-0 flex-1 overflow-hidden rounded-xl border border-lab-line bg-lab-panel">
-            <div className="pointer-events-none absolute inset-x-3 top-2 z-10 flex flex-wrap items-center justify-between gap-2">
+          <div className="flex min-h-[540px] min-w-0 flex-1 flex-col overflow-hidden rounded-xl border border-lab-line bg-lab-panel">
+            <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1.5 px-3 pt-2 pb-1">
               <div
                 role="tablist"
                 aria-label="Look inside the machine"
-                className="pointer-events-auto flex items-center gap-0.5 rounded-md border border-lab-line bg-lab-panel2 p-0.5"
+                className="flex items-center gap-0.5 rounded-md border border-lab-line bg-lab-panel2 p-0.5"
                 onKeyDown={(e) => {
                   if (e.key !== "ArrowLeft" && e.key !== "ArrowRight") return;
                   e.preventDefault();
@@ -400,8 +410,8 @@ export function DesktopLab() {
                   </button>
                 ))}
               </div>
-              {tab === "software" && (
-                <span className="hidden flex-wrap items-center gap-3 text-[11px] text-lab-muted sm:flex">
+              {tab === "software" ? (
+                <span className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-lab-muted">
                   {(["user", "kernel", "hardware", "network"] as const).map((layer) => (
                     <span key={layer} className="flex items-center gap-1.5">
                       <span className="size-2 rounded-sm" style={{ background: LAYER_HEX[layer] }} />
@@ -413,41 +423,58 @@ export function DesktopLab() {
                     Signal
                   </span>
                 </span>
+              ) : (
+                <span className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-lab-muted">
+                  <span className="flex items-center gap-1.5">
+                    <span className="size-2.5 rounded-sm border-2 border-signal shadow-[0_0_6px_var(--color-signal)]" />
+                    Signal here
+                  </span>
+                  <span className="flex items-center gap-1.5">
+                    <span className="size-2.5 rounded-sm border border-signal/60 bg-[#ffb35c]/35" />
+                    Used in this step
+                  </span>
+                  <span className="flex items-center gap-1.5">
+                    <span className="size-2.5 rounded-sm border border-[#ffb35c]/40 bg-[#ffb35c]/10 opacity-60" />
+                    Not used
+                  </span>
+                </span>
               )}
             </div>
-            <div
-              id="machine-panel-software"
-              role="tabpanel"
-              aria-labelledby="machine-tab-software"
-              inert={tab !== "software"}
-              className={`absolute inset-0 overflow-x-auto xl:overflow-hidden ${tab === "software" ? "" : "invisible"}`}
-            >
-              <div className="h-full min-w-[680px] p-2 pt-10 xl:min-w-0">
-                <XRayMap
-                  step={step}
-                  stepKey={stepKey}
-                  geometry={geometry}
-                  progress={playhead.progress}
-                  reached={reached}
-                  selected={selected}
-                  scenarioNodes={scenarioNodes}
-                  onSelect={setSelected}
-                />
+            <div className="relative min-h-0 flex-1">
+              <div
+                id="machine-panel-software"
+                role="tabpanel"
+                aria-labelledby="machine-tab-software"
+                inert={tab !== "software"}
+                className={`absolute inset-0 overflow-x-auto xl:overflow-hidden ${tab === "software" ? "" : "invisible"}`}
+              >
+                <div className="h-full min-w-[680px] px-2 pb-2 xl:min-w-0">
+                  <XRayMap
+                    step={step}
+                    stepKey={stepKey}
+                    geometry={geometry}
+                    progress={playhead.progress}
+                    reached={reached}
+                    selected={selected}
+                    scenarioNodes={scenarioNodes}
+                    onSelect={handleSelect}
+                  />
+                </div>
               </div>
-            </div>
-            <div
-              id="machine-panel-hardware"
-              role="tabpanel"
-              aria-labelledby="machine-tab-hardware"
-              inert={tab !== "hardware"}
-              className={`absolute inset-0 ${tab === "hardware" ? "" : "invisible"}`}
-            >
-              <HardwareView step={step} reached={reached} reduced={reduced} />
+              <div
+                id="machine-panel-hardware"
+                role="tabpanel"
+                aria-labelledby="machine-tab-hardware"
+                inert={tab !== "hardware"}
+                className={`absolute inset-0 ${tab === "hardware" ? "" : "invisible"}`}
+              >
+                <HardwareView step={step} reached={reached} reduced={reduced} />
+              </div>
             </div>
           </div>
         </main>
 
-        <footer className="border-t border-lab-line px-4 py-3">
+        <footer className="sticky bottom-0 z-20 border-t border-lab-line bg-lab-bg/95 px-4 py-3 backdrop-blur-sm xl:static">
           <PlaybackBar
             steps={steps}
             index={run?.index ?? 0}

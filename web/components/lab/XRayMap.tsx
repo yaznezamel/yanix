@@ -1,9 +1,9 @@
 "use client";
 
 import { AnimatePresence, motion, type MotionValue } from "motion/react";
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { PathGeometry } from "@/lib/xray/geometry";
-import { BANDS, NODES, NODE_IDS, TOPOLOGY, VIEW } from "@/lib/xray/nodes";
+import { BANDS, NODES, NODE_IDS, TOPOLOGY, VIEW, centerOf } from "@/lib/xray/nodes";
 import { packetAt } from "@/lib/xray/packets";
 import type { Layer, MachineNode, NodeId, Packet, Step } from "@/lib/xray/types";
 import styles from "./lab.module.css";
@@ -33,6 +33,35 @@ const BOUNDARIES = [
 
 type BoundaryId = (typeof BOUNDARIES)[number]["id"];
 
+const ARROWS: Record<string, [number, number]> = {
+  ArrowRight: [1, 0],
+  ArrowLeft: [-1, 0],
+  ArrowDown: [0, 1],
+  ArrowUp: [0, -1],
+};
+
+/** The box an arrow key moves to: the nearest one in that direction, preferring boxes in line. */
+function nextInDirection(from: NodeId, key: string): NodeId | null {
+  const dir = ARROWS[key];
+  if (!dir) return null;
+  const a = centerOf(from);
+  let best: NodeId | null = null;
+  let bestScore = Number.POSITIVE_INFINITY;
+  for (const id of NODE_IDS) {
+    if (id === from) continue;
+    const b = centerOf(id);
+    const along = (b.x - a.x) * dir[0] + (b.y - a.y) * dir[1];
+    if (along <= 1) continue;
+    const across = Math.abs((b.x - a.x) * dir[1] - (b.y - a.y) * dir[0]);
+    const score = along + across * 2;
+    if (score < bestScore) {
+      bestScore = score;
+      best = id;
+    }
+  }
+  return best;
+}
+
 function crossings(step: Step | null): Set<BoundaryId> {
   const crossed = new Set<BoundaryId>();
   if (!step) return crossed;
@@ -57,8 +86,13 @@ export function XRayMap({
   scenarioNodes,
   onSelect,
 }: XRayMapProps) {
+  const svgRef = useRef<SVGSVGElement>(null);
   const routeRef = useRef<SVGPathElement>(null);
   const markerRef = useRef<SVGGElement>(null);
+  // The map is one Tab stop; arrow keys move between its boxes.
+  const [rover, setRover] = useState<NodeId>(NODE_IDS[0]!);
+  // Drawn small, the boxes' second lines would be unreadably tiny: leave them out.
+  const [compact, setCompact] = useState(false);
   const capsuleRef = useRef<SVGGElement>(null);
   const lastPoint = useRef<{ x: number; y: number } | null>(null);
   const belowRef = useRef(false);
@@ -84,6 +118,27 @@ export function XRayMap({
     return progress.on("change", place);
   }, [stepKey, geometry, progress, capsuleBelow]);
 
+  useEffect(() => {
+    const svg = svgRef.current;
+    if (!svg) return;
+    const observer = new ResizeObserver(([entry]) => {
+      if (!entry) return;
+      const { width, height } = entry.contentRect;
+      const scale = Math.min(width / VIEW.width, height / VIEW.height);
+      setCompact(scale > 0 && scale < 0.7);
+    });
+    observer.observe(svg);
+    return () => observer.disconnect();
+  }, []);
+
+  function moveFocus(from: NodeId, key: string): boolean {
+    const next = nextInDirection(from, key);
+    if (!next) return false;
+    setRover(next);
+    svgRef.current?.querySelector<SVGGElement>(`[data-node="${next}"]`)?.focus();
+    return true;
+  }
+
   // The capsule's width changes when headers are added; re-place it then.
   useEffect(() => {
     if (lastPoint.current) placeCapsule(capsuleRef.current, lastPoint.current, belowRef.current);
@@ -105,6 +160,7 @@ export function XRayMap({
 
   return (
     <svg
+      ref={svgRef}
       viewBox={`0 0 ${VIEW.width} ${VIEW.height}`}
       preserveAspectRatio="xMidYMin meet"
       className="h-full w-full select-none"
@@ -229,7 +285,11 @@ export function XRayMap({
           node={NODES[id]}
           state={stateOf(id)}
           selected={selected === id}
+          tabbable={rover === id}
+          compact={compact}
           onSelect={onSelect}
+          onFocus={setRover}
+          onArrow={moveFocus}
         />
       ))}
 
@@ -252,18 +312,26 @@ function NodeBox({
   node,
   state,
   selected,
+  tabbable,
+  compact,
   onSelect,
+  onFocus,
+  onArrow,
 }: {
   node: MachineNode;
   state: NodeState;
   selected: boolean;
+  tabbable: boolean;
+  compact: boolean;
   onSelect: (id: NodeId) => void;
+  onFocus: (id: NodeId) => void;
+  onArrow: (id: NodeId, key: string) => boolean;
 }) {
   const hex = LAYER_HEX[node.layer];
   const lit = state === "current" || state === "path";
-  const opacity = state === "dim" ? 0.26 : state === "scenario" ? 0.55 : 1;
+  const opacity = state === "dim" ? 0.4 : state === "scenario" ? 0.6 : 1;
   const tall = node.h >= 60;
-  const labelY = node.bar ? 19 : tall ? 22 : node.h / 2 - 2;
+  const labelY = node.bar ? 19 : tall ? 22 : compact ? node.h / 2 + 4 : node.h / 2 - 2;
   const subY = tall ? 38 : node.h / 2 + 12;
 
   return (
@@ -273,14 +341,18 @@ function NodeBox({
       animate={{ opacity }}
       transition={{ duration: 0.35 }}
       role="button"
-      tabIndex={0}
+      tabIndex={tabbable ? 0 : -1}
+      data-node={node.id}
       aria-label={`${node.label}. ${node.about}`}
       className={`cursor-pointer outline-none ${styles.node}`}
       onClick={() => onSelect(node.id)}
+      onFocus={() => onFocus(node.id)}
       onKeyDown={(e) => {
         if (e.key === "Enter" || e.key === " ") {
           e.preventDefault();
           onSelect(node.id);
+        } else if (e.key in ARROWS && onArrow(node.id, e.key)) {
+          e.preventDefault();
         }
       }}
     >
@@ -310,17 +382,19 @@ function NodeBox({
       {node.bar ? (
         <text x={node.w / 2} y={labelY} textAnchor="middle" fontSize={12.5} fontWeight={600} fill="#e8edf2">
           {node.label}
-          <tspan fill="#8b96a3" fontSize={10} fontWeight={400} className="font-mono">
-            {"   ·   "}
-            {node.sub}
-          </tspan>
+          {!compact && (
+            <tspan fill="#8b96a3" fontSize={10} fontWeight={400} className="font-mono">
+              {"   ·   "}
+              {node.sub}
+            </tspan>
+          )}
         </text>
       ) : (
         <>
           <text x={10} y={labelY} fontSize={12.5} fontWeight={600} fill="#e8edf2">
             {node.label}
           </text>
-          {node.sub && (
+          {node.sub && !compact && (
             <text x={10} y={subY} fontSize={9.5} fill="#8b96a3" className="font-mono">
               {node.sub}
             </text>
