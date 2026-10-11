@@ -2,6 +2,8 @@
 
 import { AnimatePresence, motion } from "motion/react";
 import { useCallback, useRef, useState } from "react";
+import { whereIs } from "@/lib/hardware/activity";
+import { TREE, lineage } from "@/lib/hardware/tree";
 import { NODES } from "@/lib/xray/nodes";
 import type { CodeRef, NodeId, Step } from "@/lib/xray/types";
 import { LAYER_HEX, LAYER_NAME, PHASE_NAME, TIMESCALE } from "./palette";
@@ -13,6 +15,8 @@ interface NarrationProps {
   scenarioTitle: string | null;
   selected: NodeId | null;
   onCloseInspector: () => void;
+  /** Switch to the hardware view and fly to where a box of the map is in the hardware. */
+  onShowInHardware: (id: NodeId) => void;
 }
 
 /** Watches a scrolling text box: is there more below the fold? */
@@ -77,9 +81,17 @@ export function Narration({
   scenarioTitle,
   selected,
   onCloseInspector,
+  onShowInHardware,
 }: NarrationProps) {
   if (selected) {
     const node = NODES[selected];
+    const where = whereIs(TREE, selected);
+    const names = where.parts.map((p) =>
+      lineage(p)
+        .slice(1)
+        .map((q) => q.part.label)
+        .join(" › "),
+    );
     return (
       <section aria-label="Component" className="flex h-full flex-col gap-3 overflow-y-auto p-4">
         <div className="flex items-center justify-between gap-3">
@@ -98,6 +110,23 @@ export function Narration({
           </button>
         </div>
         <h2 className="text-xl font-semibold text-lab-ink">{node.label}</h2>
+        {names.length > 0 && (
+          <div className="flex flex-wrap items-center gap-x-3 gap-y-2 rounded-lg border border-lab-line bg-black/20 px-3 py-2">
+            <p className="min-w-0 flex-1 text-[12.5px] leading-snug text-lab-ink/80">
+              <span className="text-lab-muted">
+                {where.how === "runs" ? "Runs on " : where.how === "held" ? "Kept in " : "In the hardware: "}
+              </span>
+              {names.join(" and ")}
+            </p>
+            <button
+              type="button"
+              onClick={() => onShowInHardware(selected)}
+              className="min-h-8 shrink-0 rounded-md border border-signal/50 px-2.5 text-[12.5px] text-signal hover:bg-signal/10"
+            >
+              Show in Hardware
+            </button>
+          </div>
+        )}
         <p className="text-[14px] leading-relaxed text-lab-ink/85">{node.about}</p>
         {node.code && (
           <div className="flex flex-wrap gap-1.5">

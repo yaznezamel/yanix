@@ -178,6 +178,23 @@ export function lineage(p: Placed): Placed[] {
   return chain;
 }
 
+/** The smallest box around all the boxes. */
+export function unionBox(boxes: Box[]): Box {
+  const x = Math.min(...boxes.map((b) => b.x));
+  const y = Math.min(...boxes.map((b) => b.y));
+  const right = Math.max(...boxes.map((b) => b.x + b.w));
+  const bottom = Math.max(...boxes.map((b) => b.y + b.h));
+  return { x, y, w: right - x, h: bottom - y };
+}
+
+/** The deepest part that holds all the parts (or is one of them). */
+export function commonAncestor(parts: Placed[]): Placed {
+  const chains = parts.map(lineage);
+  let shared = chains[0]![0]!;
+  for (let i = 0; chains.every((c) => c[i] !== undefined && c[i] === chains[0]![i]); i++) shared = chains[0]![i]!;
+  return shared;
+}
+
 export function contains(box: Box, p: Point): boolean {
   return p.x >= box.x && p.x <= box.x + box.w && p.y >= box.y && p.y <= box.y + box.h;
 }

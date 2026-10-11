@@ -6,6 +6,8 @@ import {
   fit,
   flight,
   panBy,
+  placeBeside,
+  screenBox,
   toScreen,
   toWorld,
   visibleBox,
@@ -79,5 +81,26 @@ describe("camera", () => {
     const mid = f.at(0.5);
     expect(mid.k).toBeGreaterThan(Math.min(from.k, to.k) * 0.5);
     expect(flight(to, to, view).duration).toBe(0);
+  });
+
+  it("puts a part's card beside it, on the side with room, and always inside the view", () => {
+    const card = { width: 200, height: 100 };
+    // Room on the right.
+    expect(placeBeside({ x: 100, y: 100, w: 50, h: 50 }, card, view)).toEqual({ x: 160, y: 100 });
+    // No room on the right: the left.
+    expect(placeBeside({ x: 650, y: 100, w: 50, h: 50 }, card, view)).toEqual({ x: 440, y: 100 });
+    // A part near the bottom: the card moves up to stay in the view.
+    expect(placeBeside({ x: 100, y: 580, w: 50, h: 10 }, card, view).y).toBe(600 - 8 - 100);
+    // A wide part: below it.
+    expect(placeBeside({ x: 20, y: 100, w: 760, h: 50 }, card, view)).toEqual({ x: 20, y: 160 });
+    // A part that fills the view: in its top corner.
+    expect(placeBeside({ x: -100, y: -100, w: 1000, h: 800 }, card, view)).toEqual({ x: 8, y: 8 });
+    // The pointer is a box of no size.
+    expect(placeBeside({ x: 300, y: 200, w: 0, h: 0 }, card, view, 16)).toEqual({ x: 316, y: 200 });
+  });
+
+  it("finds a world box on screen", () => {
+    const cam = { x: 500, y: 500, k: 2 };
+    expect(screenBox(cam, view, { x: 500, y: 500, w: 10, h: 20 })).toEqual({ x: 400, y: 300, w: 20, h: 40 });
   });
 });

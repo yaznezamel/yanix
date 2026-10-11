@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { NodeId, Step } from "@/lib/xray/types";
-import { IDLE, activityAt, linksBetween, shortestLinks } from "./activity";
+import { IDLE, activityAt, linksBetween, shortestLinks, whereIs } from "./activity";
 import { TREE } from "./tree";
 
 function step(path: NodeId[]): Step {
@@ -72,5 +72,19 @@ describe("hardware activity", () => {
       "computer:hda-link",
       "computer:jack",
     ]);
+  });
+
+  it("finds where a box of the software map is in the hardware", () => {
+    const ids = (node: Parameters<typeof whereIs>[1]) => {
+      const w = whereIs(TREE, node);
+      return { how: w.how, parts: w.parts.map((p) => p.id) };
+    };
+    // The page cache is data, kept in RAM, though the kernel code that manages it runs on a core.
+    expect(ids("pagecache")).toEqual({ how: "held", parts: ["dimm0", "dimm1"] });
+    expect(ids("vfs")).toEqual({ how: "runs", parts: ["cpu.core0"] });
+    expect(ids("browser")).toEqual({ how: "runs", parts: ["cpu.core0"] });
+    expect(ids("ssd")).toEqual({ how: "is", parts: ["ssd"] });
+    expect(ids("usbhc")).toEqual({ how: "is", parts: ["chipset.usb"] });
+    expect(ids("display")).toEqual({ how: "is", parts: ["gpu", "monitor"] });
   });
 });

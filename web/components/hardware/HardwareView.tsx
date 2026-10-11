@@ -1,8 +1,8 @@
 "use client";
 
 import { animate, type AnimationPlaybackControls } from "motion/react";
-import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
-import { activityAt, type Activity } from "@/lib/hardware/activity";
+import { useCallback, useEffect, useId, useImperativeHandle, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { activityAt, whereIs, type Activity } from "@/lib/hardware/activity";
 import {
   FIT_MARGIN,
   NO_INSETS,
@@ -13,6 +13,8 @@ import {
   flight,
   freeCentre,
   panBy,
+  placeBeside,
+  screenBox,
   toScreen,
   toWorld,
   zoomAround,
@@ -24,20 +26,23 @@ import {
 } from "@/lib/hardware/camera";
 import {
   TREE,
+  commonAncestor,
   fullyOpenZoom,
   levelOfDetail,
   limitsFor,
   lineage,
   pickAt,
   refocus,
+  unionBox,
   type Detail,
   type Placed,
 } from "@/lib/hardware/tree";
 import { NODES } from "@/lib/xray/nodes";
-import type { Step } from "@/lib/xray/types";
+import type { NodeId, Step } from "@/lib/xray/types";
 import { LAYER_NAME } from "@/components/lab/palette";
 import styles from "./hardware.module.css";
 import { ArtDefs } from "./art";
+import { PartCard } from "./PartCard";
 import { PartView } from "./Parts";
 
 // The hardware view: the computer as nested parts you can zoom into, from the
@@ -51,14 +56,33 @@ type Gesture =
   | { kind: "drag"; start: Point; from: Camera; moved: boolean }
   | { kind: "pinch"; distance: number; middle: Point; from: Camera };
 
+/** What the lab can ask of the view. */
+export interface HardwareHandle {
+  /** Fly to where a node of the software map is in the hardware, and point it out. */
+  show: (node: NodeId) => void;
+  /** Put keyboard focus on the view (and bring it into sight). */
+  focus: () => void;
+}
+
 interface HardwareViewProps {
   step: Step | null;
   /** Last path node the signal has reached in this step. */
   reached: number;
   reduced: boolean;
+  ref?: React.Ref<HardwareHandle>;
+}
+
+/** A part's card, shown beside the pointer or beside the part with keyboard focus. */
+interface CardAnchor {
+  id: string;
+  by: "pointer" | "focus";
 }
 
 const KEY_ZOOM = 1.6;
+/** How long the pointer rests on a part before its card shows. */
+const HOVER_MS = 400;
+/** For this long after a card goes, the next part's card shows at once: moving between parts crosses bare board. */
+const GRACE_MS = 600;
 const KEY_PAN = 80;
 const CLICK_SLOP = 5;
 /** Below this width the lab scrolls as a page, so the view leaves plain scrolling and one-finger swipes to it. */
@@ -99,7 +123,7 @@ function busiest(activity: Activity): Placed[] {
     .filter((p): p is Placed => p !== undefined);
 }
 
-export function HardwareView({ step, reached, reduced }: HardwareViewProps) {
+export function HardwareView({ step, reached, reduced, ref }: HardwareViewProps) {
   const svgRef = useRef<SVGSVGElement>(null);
   const navRef = useRef<HTMLDivElement>(null);
   const aboutRef = useRef<HTMLDivElement>(null);
@@ -128,6 +152,15 @@ export function HardwareView({ step, reached, reduced }: HardwareViewProps) {
   const [nudge, setNudge] = useState<string | null>(null);
   // The part that holds the view's one place in the tab order.
   const [rover, setRover] = useState(TREE.root.children[0]!.id);
+  const [card, setCard] = useState<CardAnchor | null>(null);
+  const cardRef = useRef<HTMLDivElement>(null);
+  const cardSize = useRef<Size>({ width: 0, height: 0 });
+  // The card as code outside a render sees it (a camera move, a pointer move).
+  const cardAt = useRef<CardAnchor | null>(null);
+  const hoverId = useRef<string | null>(null);
+  const hoverTimer = useRef(0);
+  const cardGoneAt = useRef(Number.NEGATIVE_INFINITY);
+  const pointerAt = useRef<Point>({ x: 0, y: 0 });
   const detailRef = useRef(detail);
   const hintId = useId();
 
@@ -155,7 +188,33 @@ export function HardwareView({ step, reached, reduced }: HardwareViewProps) {
     nudgeTimer.current = window.setTimeout(() => setNudge(null), 1800);
   }, []);
 
-  useEffect(() => () => window.clearTimeout(nudgeTimer.current), []);
+  useEffect(
+    () => () => {
+      window.clearTimeout(nudgeTimer.current);
+      window.clearTimeout(hoverTimer.current);
+    },
+    [],
+  );
+
+  const showCard = useCallback((next: CardAnchor | null) => {
+    window.clearTimeout(hoverTimer.current);
+    cardAt.current = next;
+    setCard(next);
+  }, []);
+
+  /** Puts the card beside its part, or beside the pointer, without a render. */
+  const placeCard = useCallback(() => {
+    const el = cardRef.current;
+    const at = cardAt.current;
+    const cam = camRef.current;
+    const node = at ? TREE.byId.get(at.id) : undefined;
+    if (!el || !at || !cam || !node) return;
+    const view = sizeRef.current;
+    const anchor = at.by === "pointer" ? { ...pointerAt.current, w: 0, h: 0 } : screenBox(cam, view, node.world);
+    const p = placeBeside(anchor, cardSize.current, view, at.by === "pointer" ? 16 : 10);
+    el.style.transform = `translate(${Math.round(p.x)}px, ${Math.round(p.y)}px)`;
+    el.style.opacity = "1";
+  }, []);
 
   const changeFocus = useCallback((id: string) => {
     if (focusRef.current === id) return;
@@ -190,9 +249,16 @@ export function HardwareView({ step, reached, reduced }: HardwareViewProps) {
       worldRef.current?.setAttribute("transform", cameraTransform(cam, sizeRef.current));
       svgRef.current?.style.setProperty("--zoom", String(cam.k));
       if (byHand) movedByHand.current = true;
+      // A card follows its part; the pointer's goes, since the part under the pointer may change.
+      if (cardAt.current?.by === "pointer") {
+        hoverId.current = null;
+        showCard(null);
+      } else if (cardAt.current) {
+        placeCard();
+      }
       refresh();
     },
-    [refresh],
+    [refresh, showCard, placeCard],
   );
 
   const stopFlight = useCallback(() => {
@@ -200,9 +266,12 @@ export function HardwareView({ step, reached, reduced }: HardwareViewProps) {
     flightRef.current = null;
   }, []);
 
-  /** Glide to a camera (van Wijk and Nuij's zoom path, under half a second), or jump with reduced motion. */
+  /**
+   * Glide to a camera (van Wijk and Nuij's zoom path, under half a second), or
+   * jump with reduced motion. `done` runs on arrival.
+   */
   const flyTo = useCallback(
-    (target: Camera, byHand: boolean) => {
+    (target: Camera, byHand: boolean, done?: () => void) => {
       const from = camRef.current;
       const limits = limitsRef.current;
       if (!from || !limits) return;
@@ -211,20 +280,26 @@ export function HardwareView({ step, reached, reduced }: HardwareViewProps) {
       const path = flight(from, to, sizeRef.current);
       if (reducedRef.current || path.duration === 0) {
         apply(to, byHand);
+        done?.();
         return;
       }
-      flightRef.current = animate(0, 1, {
+      const controls = animate(0, 1, {
         duration: path.duration / 1000,
         ease: "easeInOut",
         onUpdate: (t) => apply(path.at(t), byHand),
+        onComplete: () => {
+          if (flightRef.current === controls) flightRef.current = null;
+          done?.();
+        },
       });
+      flightRef.current = controls;
     },
     [apply, stopFlight],
   );
 
   /** Fly to a part and frame it: the part becomes what you are looking at. */
   const dive = useCallback(
-    (p: Placed) => {
+    (p: Placed, done?: () => void) => {
       const svg = svgRef.current;
       // A part had keyboard focus (not the view itself, as after a click).
       const hadFocus = svg !== null && svg !== document.activeElement && svg.contains(document.activeElement);
@@ -235,7 +310,7 @@ export function HardwareView({ step, reached, reduced }: HardwareViewProps) {
       // Close enough that the part's insides are fully shown, even if its edges go a little off screen.
       const framed = fit(p.world, size, FIT_MARGIN, free);
       const k = Math.max(framed.k, Math.min(fullyOpenZoom(p), framed.k * 1.35));
-      flyTo(centreOn(p.world, k, free), false);
+      flyTo(centreOn(p.world, k, free), false, done);
       // Keep keyboard focus on what you are looking at; the part you left may disappear.
       if (hadFocus && svg) {
         const el = p.depth > 0 ? svg.querySelector<SVGGElement>(`[data-part="${p.id}"]`) : null;
@@ -291,12 +366,13 @@ export function HardwareView({ step, reached, reduced }: HardwareViewProps) {
     [flyTo, insets],
   );
 
-  /** Tabbing to a part that is off screen brings it into view. */
+  /** Tabbing to a part shows its card, and brings the part into view if it is off screen. */
   const reveal = useCallback(
     (p: Placed) => {
       setRover(p.id);
       const cam = camRef.current;
       if (!cam || quietFocus.current) return;
+      showCard({ id: p.id, by: "focus" });
       const size = sizeRef.current;
       const a = toScreen(cam, size, { x: p.world.x, y: p.world.y });
       const b = toScreen(cam, size, { x: p.world.x + p.world.w, y: p.world.y + p.world.h });
@@ -307,7 +383,60 @@ export function HardwareView({ step, reached, reduced }: HardwareViewProps) {
       const framed = fit(p.world, size, FIT_MARGIN, free);
       flyTo(centreOn(p.world, Math.min(cam.k, framed.k), free), true);
     },
-    [flyTo, insets],
+    [flyTo, insets, showCard],
+  );
+
+  /** Flashes an outline around parts, to point them out. */
+  const spot = useCallback((parts: Placed[]) => {
+    let tries = 0;
+    const attempt = () => {
+      const svg = svgRef.current;
+      if (!svg) return;
+      const outlines = parts.map((p) => svg.querySelector<SVGRectElement>(`[data-part="${p.id}"] > [data-spot]`));
+      // The parts appear a frame or two after the camera arrives.
+      if (outlines.includes(null) && tries++ < 20) {
+        requestAnimationFrame(attempt);
+        return;
+      }
+      for (const outline of outlines) {
+        if (reducedRef.current) {
+          outline?.animate([{ opacity: 1 }, { opacity: 1, offset: 0.85 }, { opacity: 0 }], { duration: 2400 });
+        } else {
+          outline?.animate(
+            [
+              { opacity: 1, strokeWidth: "3px" },
+              { opacity: 0, strokeWidth: "16px" },
+            ],
+            { duration: 1000, iterations: 3, easing: "ease-out" },
+          );
+        }
+      }
+    };
+    requestAnimationFrame(attempt);
+  }, []);
+
+  useImperativeHandle(
+    ref,
+    () => ({
+      show(node: NodeId) {
+        const { parts } = whereIs(TREE, node);
+        if (parts.length === 0) return;
+        const done = () => spot(parts);
+        if (parts.length === 1) {
+          dive(parts[0]!, done);
+          return;
+        }
+        // Several parts, such as both RAM sticks: frame them together, looking at the part that holds them.
+        const box = unionBox(parts.map((p) => p.world));
+        changeFocus(commonAncestor(parts).id);
+        const free = insets();
+        flyTo(centreOn(box, fit(box, sizeRef.current, FIT_MARGIN, free).k, free), false, done);
+      },
+      focus() {
+        svgRef.current?.focus();
+      },
+    }),
+    [dive, changeFocus, flyTo, insets, spot],
   );
 
   // Size: frame the whole computer the first time, then keep what you were
@@ -402,10 +531,45 @@ export function HardwareView({ step, reached, reduced }: HardwareViewProps) {
     return rect ? { x: e.clientX - rect.left, y: e.clientY - rect.top } : { x: 0, y: 0 };
   }
 
+  /** The pointer rests on a part: its card shows after a moment, or at once if a card is up already. */
+  function hover(p: Point) {
+    pointerAt.current = p;
+    const cam = camRef.current;
+    if (!cam || flightRef.current) return;
+    const id = pickAt(TREE, cam.k, toWorld(cam, sizeRef.current, p))?.id ?? null;
+    if (id === hoverId.current) {
+      if (cardAt.current?.by === "pointer") placeCard();
+      return;
+    }
+    hoverId.current = id;
+    window.clearTimeout(hoverTimer.current);
+    if (id === null) {
+      if (cardAt.current?.by === "pointer") {
+        showCard(null);
+        cardGoneAt.current = performance.now();
+      }
+    } else if (cardAt.current || performance.now() - cardGoneAt.current < GRACE_MS) {
+      showCard({ id, by: "pointer" });
+    } else {
+      hoverTimer.current = window.setTimeout(() => showCard({ id, by: "pointer" }), HOVER_MS);
+    }
+  }
+
+  function onPointerLeave(e: React.PointerEvent<SVGSVGElement>) {
+    if (e.pointerType === "touch") return;
+    hoverId.current = null;
+    window.clearTimeout(hoverTimer.current);
+    if (cardAt.current?.by === "pointer") showCard(null);
+  }
+
   function onPointerDown(e: React.PointerEvent<SVGSVGElement>) {
     if (e.pointerType === "mouse" && e.button !== 0) return;
     const cam = camRef.current;
     if (!cam) return;
+    // A click or a drag starts: no card in the way.
+    hoverId.current = null;
+    if (cardAt.current) showCard(null);
+    else window.clearTimeout(hoverTimer.current);
     // Keep keyboard focus on the view (not on the part under the pointer), so
     // a click does not also count as tabbing to a part.
     e.preventDefault();
@@ -427,6 +591,7 @@ export function HardwareView({ step, reached, reduced }: HardwareViewProps) {
 
   function onPointerMove(e: React.PointerEvent<SVGSVGElement>) {
     const pointers = pointersRef.current;
+    if (pointers.size === 0 && e.pointerType !== "touch") hover(local(e));
     const gesture = gestureRef.current;
     const limits = limitsRef.current;
     if (!pointers.has(e.pointerId) || !gesture || !limits) return;
@@ -511,6 +676,15 @@ export function HardwareView({ step, reached, reduced }: HardwareViewProps) {
   }
 
   const activity = useMemo(() => activityAt(TREE, step, reached), [step, reached]);
+  const cardNode = card ? TREE.byId.get(card.id) : undefined;
+
+  // Measure the card once its content is in, then place it.
+  useLayoutEffect(() => {
+    const el = cardRef.current;
+    if (!card || !el) return;
+    cardSize.current = { width: el.offsetWidth, height: el.offsetHeight };
+    placeCard();
+  }, [card, activity, placeCard]);
   // The part in the tab order: the last one you were on, or the nearest part
   // around it that can still be reached at this zoom.
   const tabStop = useMemo(() => {
@@ -538,6 +712,10 @@ export function HardwareView({ step, reached, reduced }: HardwareViewProps) {
         onPointerMove={onPointerMove}
         onPointerUp={onPointerUp}
         onPointerCancel={onPointerUp}
+        onPointerLeave={onPointerLeave}
+        onBlur={() => {
+          if (cardAt.current?.by === "focus") showCard(null);
+        }}
       >
         <ArtDefs />
         <g ref={worldRef} style={ready ? undefined : { visibility: "hidden" }}>
@@ -602,6 +780,10 @@ export function HardwareView({ step, reached, reduced }: HardwareViewProps) {
             {nudge}
           </span>
         </div>
+      )}
+
+      {card && cardNode && (
+        <PartCard ref={cardRef} node={cardNode} activity={activity} active={step !== null} by={card.by} />
       )}
 
       <div className="absolute right-3 bottom-3 flex flex-col gap-1.5">

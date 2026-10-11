@@ -5,7 +5,7 @@ import Link from "next/link";
 import { useEffect, useMemo, useReducer, useRef, useState } from "react";
 import { Desktop } from "@/components/desktop/Desktop";
 import { VirtualScreen } from "@/components/desktop/VirtualScreen";
-import { HardwareView } from "@/components/hardware/HardwareView";
+import { HardwareView, type HardwareHandle } from "@/components/hardware/HardwareView";
 import {
   INITIAL_PLAYER,
   currentApps,
@@ -133,6 +133,7 @@ export function DesktopLab() {
   const [selected, setSelected] = useState<NodeId | null>(null);
   const [tab, setTab] = useState<MachineTab>("software");
   const resumeAfterScrub = useRef(false);
+  const hardware = useRef<HardwareHandle>(null);
 
   const run = state.run;
   const scenario = run?.scenario ?? null;
@@ -221,6 +222,16 @@ export function DesktopLab() {
         .getElementById("lab-story")
         ?.scrollIntoView({ behavior: reduced ? "auto" : "smooth", block: "start" }),
     );
+  }
+
+  /** From a box's details: switch to the hardware view and fly to the parts it stands for. */
+  function showInHardware(id: NodeId) {
+    setTab("hardware");
+    // The hardware panel is inert until the switch renders.
+    requestAnimationFrame(() => {
+      hardware.current?.show(id);
+      hardware.current?.focus();
+    });
   }
 
   /** Opening a box's details pauses the trace, so the story does not run on unseen. */
@@ -386,6 +397,7 @@ export function DesktopLab() {
                   scenarioTitle={run?.scenario.title ?? null}
                   selected={selected}
                   onCloseInspector={() => setSelected(null)}
+                  onShowInHardware={showInHardware}
                 />
               </div>
               <div className={panelClass}>
@@ -494,7 +506,7 @@ export function DesktopLab() {
                 inert={tab !== "hardware"}
                 className={`absolute inset-0 ${tab === "hardware" ? "" : "invisible"}`}
               >
-                <HardwareView step={step} reached={reached} reduced={reduced} />
+                <HardwareView ref={hardware} step={step} reached={reached} reduced={reduced} />
               </div>
             </div>
           </div>

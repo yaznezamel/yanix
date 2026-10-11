@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { fit, toScreen } from "./camera";
 import {
   TREE,
+  commonAncestor,
   coverage,
   fullyOpenZoom,
   labelFit,
@@ -12,6 +13,7 @@ import {
   opennessCss,
   pickAt,
   refocus,
+  unionBox,
 } from "./tree";
 
 const view = { width: 600, height: 600 };
@@ -167,5 +169,12 @@ describe("hardware tree", () => {
     expect(regs.world.w * limits.maxK).toBeGreaterThan(400);
     const s = toScreen(fit(regs.world, view), view, centre("cpu.core0.regs"));
     expect(s.x).toBeCloseTo(300);
+  });
+
+  it("frames several parts together, from the part that holds them all", () => {
+    expect(unionBox([part("dimm0").world, part("dimm1").world])).toEqual({ x: 650, y: 70, w: 182, h: 310 });
+    expect(commonAncestor([part("dimm0"), part("dimm1")]).id).toBe("computer");
+    expect(commonAncestor([part("cpu.core0.l1d"), part("cpu.l3")]).id).toBe("cpu");
+    expect(commonAncestor([part("cpu.core0")]).id).toBe("cpu.core0");
   });
 });

@@ -269,6 +269,7 @@ function PartBox({
       />
       {/* Flashed by "Show in Hardware", to point out the part. */}
       <rect
+        data-spot
         className={styles.spot}
         {...box}
         fill="none"

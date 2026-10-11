@@ -141,3 +141,30 @@ export function flight(from: Camera, to: Camera, view: Size): Flight {
     },
   };
 }
+
+/** A box in world coordinates, on screen. */
+export function screenBox(cam: Camera, view: Size, box: Box): Box {
+  const a = toScreen(cam, view, { x: box.x, y: box.y });
+  return { x: a.x, y: a.y, w: box.w * cam.k, h: box.h * cam.k };
+}
+
+/**
+ * Where a card goes beside a box on screen (a pointer is a box of no size):
+ * to its right, else its left, else below or above it, and always inside the
+ * view. A box too big for any of those gets the card in its top corner.
+ */
+export function placeBeside(anchor: Box, card: Size, view: Size, gap = 10, margin = 8): Point {
+  const maxX = Math.max(margin, view.width - margin - card.width);
+  const maxY = Math.max(margin, view.height - margin - card.height);
+  const clampX = (x: number) => Math.min(maxX, Math.max(margin, x));
+  const clampY = (y: number) => Math.min(maxY, Math.max(margin, y));
+  const right = anchor.x + anchor.w + gap;
+  if (right + card.width <= view.width - margin) return { x: right, y: clampY(anchor.y) };
+  const left = anchor.x - gap - card.width;
+  if (left >= margin) return { x: left, y: clampY(anchor.y) };
+  const below = anchor.y + anchor.h + gap;
+  if (below + card.height <= view.height - margin) return { x: clampX(anchor.x), y: below };
+  const above = anchor.y - gap - card.height;
+  if (above >= margin) return { x: clampX(anchor.x), y: above };
+  return { x: clampX(anchor.x + gap), y: clampY(anchor.y + gap) };
+}

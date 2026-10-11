@@ -151,3 +151,25 @@ export function activityAt(tree: Tree, step: Step | null, reached: number): Acti
   }
   return { current, touched, links };
 }
+
+/** How a node of the software map is found in the hardware. */
+export interface Whereabouts {
+  /** It is the part ("is"), its data is held in the parts ("held"), or its code runs on them ("runs"). */
+  how: "is" | "held" | "runs";
+  parts: Placed[];
+}
+
+/**
+ * Where a node of the software map is in the hardware view: the parts it is
+ * drawn as, the memory that holds it (the page cache is kept in RAM), or the
+ * cores that run it (all user and kernel code, in this model on core 0).
+ */
+export function whereIs(tree: Tree, node: NodeId): Whereabouts {
+  const layer = NODES[node].layer;
+  const code = layer === "user" || layer === "kernel";
+  const deepest = (ps: Placed[]) => ps.filter((p) => !ps.some((q) => q !== p && q.id.startsWith(`${p.id}.`)));
+  const mapped = deepest(tree.all.filter((p) => p.part.maps?.includes(node)));
+  if (mapped.length > 0) return { how: code ? "held" : "is", parts: mapped };
+  if (code) return { how: "runs", parts: deepest(tree.all.filter((p) => p.part.runs?.includes(layer))) };
+  return { how: "is", parts: [] };
+}
