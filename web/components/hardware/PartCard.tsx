@@ -10,10 +10,34 @@ import { NODES } from "@/lib/xray/nodes";
 // without a render, so it starts transparent until placed. Screen readers get
 // the same text from the part's own label, so the card is hidden from them.
 
+/** What a part has to do with the step under way, in a sentence or two. */
+function statusOf(node: Placed, activity: Activity, running: string | null): { text: string; className: string } {
+  const lit = activity.current.has(node.id) || activity.touched.has(node.id);
+  if (lit) {
+    // Which parts inside were used, such as the blocks a DMA crosses in the CPU.
+    const inside = node.children.filter((c) => activity.touched.has(c.id));
+    const cores = node.children.filter((c) => c.part.runs);
+    let text = activity.current.has(node.id) ? "The signal is here now." : "Used in this step.";
+    if (inside.length > 0) text += ` Inside: ${inside.map((c) => c.part.label).join(", ")}.`;
+    if (cores.length > 0 && !cores.some((c) => activity.touched.has(c.id))) text += " No core runs code for it.";
+    return { text, className: activity.current.has(node.id) ? "text-signal" : "text-signal/85" };
+  }
+  // The units of the core that runs the step's code are not modelled yet: neither used nor unused.
+  const runner = node.parent?.part.runs && activity.touched.has(node.parent.id) ? node.parent : null;
+  if (runner) {
+    return {
+      text: `${runner.part.label} is running ${running ?? "code"} in this step. Which of its units that uses is not shown yet.`,
+      className: "text-lab-ink/80",
+    };
+  }
+  return { text: "Not part of this step.", className: "text-lab-muted" };
+}
+
 export function PartCard({
   node,
   activity,
   active,
+  running,
   by,
   ref,
 }: {
@@ -21,18 +45,14 @@ export function PartCard({
   activity: Activity;
   /** A trace is under way. */
   active: boolean;
+  /** The program or kernel code the signal is in, which a core is running. */
+  running: string | null;
   /** Shown for the pointer or for keyboard focus: the hint names the matching key or click. */
   by: "pointer" | "focus";
   ref: React.Ref<HTMLDivElement>;
 }) {
   const { part } = node;
-  const status = !active
-    ? null
-    : activity.current.has(node.id)
-      ? { text: "The signal is here now", className: "text-signal" }
-      : activity.touched.has(node.id)
-        ? { text: "Used in this step", className: "text-signal/85" }
-        : { text: "Not used in this step", className: "text-lab-muted" };
+  const status = active ? statusOf(node, activity, running) : null;
   const software = (part.maps ?? []).map((id) => NODES[id].label);
   const inside = node.children.length > 0;
 

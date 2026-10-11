@@ -68,12 +68,16 @@ export function labelFit(p: Placed, k: number): LabelFit {
     }
   }
   // Parts of the whole computer always keep a name, under the box if need be,
-  // wrapped to the box's width so neighbours' names do not run together.
-  if (p.depth === 1) return { place: "below", lines: wrap(part.short ?? part.label, 10, Math.max(along + 12, 44)), size: 10 };
+  // wrapped to the box's width so neighbours' names do not run together (a
+  // tall, thin part's width is its short side).
+  if (p.depth === 1) {
+    const room = vertical ? Math.max(across + 12, 24) : Math.max(along + 12, 44);
+    return { place: "below", lines: wrap(part.short ?? part.label, 10, room), size: 10 };
+  }
   return { place: "none" };
 }
 
-/** A link in world coordinates, and where its label goes: by the middle of its longest straight run. */
+/** A link in world coordinates, and where its label goes: along its longest straight run (by its middle, unless the link says otherwise). */
 export interface LinkShape {
   points: Point[];
   label: { x: number; y: number; length: number; vertical: boolean; left: boolean };
@@ -90,13 +94,14 @@ export function linkShape(parent: Placed, link: Link): LinkShape {
     y: parent.world.y + y * parent.unit,
   }));
   const left = link.labelSide === "left";
+  const at = link.labelAt ?? 0.5;
   let label = { x: 0, y: 0, length: 0, vertical: false, left };
   for (let i = 1; i < points.length; i++) {
     const a = points[i - 1]!;
     const b = points[i]!;
     const length = Math.hypot(b.x - a.x, b.y - a.y);
     if (length > label.length) {
-      label = { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2, length, vertical: a.x === b.x, left };
+      label = { x: a.x + (b.x - a.x) * at, y: a.y + (b.y - a.y) * at, length, vertical: a.x === b.x, left };
     }
   }
   const shape = { points, label };
@@ -220,6 +225,15 @@ export function fullyOpenZoom(p: Placed): number {
   return ((OPEN_FROM + OPEN_SPAN) * p.openAt) / p.world.w;
 }
 
+/** How far a part's children are faded in when it is framed by a dive, at least: enough to click them. */
+export const CLICKABLE = 0.6;
+
+/** The zoom at which a part's children have faded in far enough to be clicked (0 for a part with none). */
+export function clickableZoom(p: Placed): number {
+  if (p.children.length === 0) return 0;
+  return ((OPEN_FROM + CLICKABLE * OPEN_SPAN) * p.openAt) / p.world.w;
+}
+
 export interface Detail {
   /** Parts whose children are drawn. */
   open: Set<string>;
@@ -237,6 +251,8 @@ export interface Detail {
   labels: Map<string, LabelFit>;
   /** Links, as "parentId:linkId", whose labels fit. */
   linkLabels: Set<string>;
+  /** Frames, as "parentId:label", whose names show on their top edge. */
+  legends: Set<string>;
   /**
    * For each part, a signature of how it and the parts inside it are drawn
    * (names aside, which have a layer of their own): a part whose key did not
@@ -253,6 +269,13 @@ function fitKey(fit: LabelFit): string {
   return `i${fit.size}${fit.text}${fit.sub ? "+" : ""}`;
 }
 
+/**
+ * How wide a part must be on screen, in pixels, to show its own small text:
+ * its frames' names and its wires' names. Below that (the whole computer on a
+ * phone) they would sit on the names of its parts.
+ */
+const SMALL_TEXT_MIN = 340;
+
 /** What to draw for a camera: drawing only what is on screen and big enough keeps every frame cheap. */
 export function levelOfDetail(tree: Tree, cam: Camera, view: Size): Detail {
   const seen = visibleBox(cam, view);
@@ -263,6 +286,7 @@ export function levelOfDetail(tree: Tree, cam: Camera, view: Size): Detail {
   const interactive = new Set<string>();
   const labels = new Map<string, LabelFit>();
   const linkLabels = new Set<string>();
+  const legends = new Set<string>();
   const keys = new Map<string, string>();
 
   const names: string[] = [];
@@ -274,10 +298,16 @@ export function levelOfDetail(tree: Tree, cam: Camera, view: Size): Detail {
     open.add(p.id);
     if (o >= 1) full.add(p.id);
     const inside = [o >= 1 ? "[=" : "["];
-    for (const link of p.part.links ?? []) {
-      if (!linkLabelFits(p, link, cam.k)) continue;
-      linkLabels.add(`${p.id}:${link.id}`);
-      names.push(link.id);
+    if (p.world.w * cam.k >= SMALL_TEXT_MIN) {
+      for (const link of p.part.links ?? []) {
+        if (!linkLabelFits(p, link, cam.k)) continue;
+        linkLabels.add(`${p.id}:${link.id}`);
+        names.push(link.id);
+      }
+      for (const frame of p.part.frames ?? []) {
+        legends.add(`${p.id}:${frame.label}`);
+        names.push(frame.label);
+      }
     }
     const childrenReachable = reachable && o >= 0.5;
     for (const child of p.children) {
@@ -296,7 +326,17 @@ export function levelOfDetail(tree: Tree, cam: Camera, view: Size): Detail {
   }
   const drawing = visit(tree.root, true);
   keys.set(tree.root.id, drawing);
-  return { open, full, drawn, interactive, labels, linkLabels, keys, signature: `${drawing} | ${names.join(" ")}` };
+  return {
+    open,
+    full,
+    drawn,
+    interactive,
+    labels,
+    linkLabels,
+    legends,
+    keys,
+    signature: `${drawing} | ${names.join(" ")}`,
+  };
 }
 
 /** The share of the view a part covers, from 0 to 1. */
@@ -336,12 +376,33 @@ export function refocus(
   }
 }
 
-/** The deepest part under a world point that is shown clearly enough to be clicked. */
-export function pickAt(tree: Tree, k: number, point: Point): Placed | null {
+/** How far a point is from a box (0 inside it). */
+function distanceTo(box: Box, p: Point): number {
+  const dx = Math.max(box.x - p.x, 0, p.x - (box.x + box.w));
+  const dy = Math.max(box.y - p.y, 0, p.y - (box.y + box.h));
+  return Math.hypot(dx, dy);
+}
+
+/**
+ * The deepest part under a world point that is shown clearly enough to be
+ * clicked. With `slop` (world units), a point just outside a small part still
+ * picks it, as a fingertip is wider than the part may be.
+ */
+export function pickAt(tree: Tree, k: number, point: Point, slop = 0): Placed | null {
   let hit: Placed | null = null;
   let node = tree.root;
   while (openness(node, k) >= 0.5) {
-    const child = node.children.find((c) => contains(c.world, point));
+    let child = node.children.find((c) => contains(c.world, point));
+    if (!child && slop > 0) {
+      let best = slop;
+      for (const c of node.children) {
+        const d = distanceTo(c.world, point);
+        if (d <= best) {
+          best = d;
+          child = c;
+        }
+      }
+    }
     if (!child) break;
     hit = child;
     node = child;

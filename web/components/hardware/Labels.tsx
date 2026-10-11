@@ -22,7 +22,6 @@ const INK = "#e8edf2";
 const MUTED = "#9aa5b1";
 /** The backing behind a part's name, so it reads over any drawing. */
 const TAG = "rgba(8, 11, 15, 0.76)";
-const DIM = 0.45;
 
 /** Places a group at a world point, on screen: its contents are in screen pixels. */
 function screenSized(x: number, y: number, extra = ""): React.CSSProperties {
@@ -54,9 +53,11 @@ export const LabelLayer = memo(function LabelLayer({
                 <LinkLabel key={link.id} parent={p} link={link} lit={activity.links.has(id)} />
               ) : null;
             })}
-            {p.part.frames?.map((frame) => (
-              <FrameLegend key={frame.label} box={inParent(p, frame.box)} label={frame.label} />
-            ))}
+            {p.part.frames?.map((frame) =>
+              detail.legends.has(`${p.id}:${frame.label}`) ? (
+                <FrameLegend key={frame.label} box={inParent(p, frame.box)} label={frame.label} />
+              ) : null,
+            )}
             {p.children.map((child) => {
               const fit = detail.labels.get(child.id);
               if (!fit || fit.place === "none" || !detail.drawn.has(child.id)) return null;
@@ -76,15 +77,19 @@ export const LabelLayer = memo(function LabelLayer({
   );
 });
 
+/**
+ * A part's name. A dimmed part (not part of the step) keeps its name readable,
+ * in a quieter colour, since you can still click it.
+ */
 function PartLabel({ node, fit, open, dim }: { node: Placed; fit: LabelFit; open: boolean; dim: boolean }) {
   const { world: w, part } = node;
-  const fade = { opacity: dim ? DIM : 1 };
+  const ink = dim ? MUTED : INK;
   if (fit.place === "none") return null;
   if (fit.place === "below") {
     return (
-      <g className={styles.group} style={fade}>
+      <g>
         <g style={screenSized(w.x + w.w / 2, w.y + w.h)}>
-          <text textAnchor="middle" fontSize={fit.size} fontWeight={600} fill={INK} className={styles.halo}>
+          <text textAnchor="middle" fontSize={fit.size} fontWeight={600} fill={ink} className={styles.halo}>
             {fit.lines.map((line, i) => (
               <tspan key={i} x={0} y={fit.size + 3 + i * (fit.size + 2)}>
                 {line}
@@ -103,10 +108,10 @@ function PartLabel({ node, fit, open, dim }: { node: Placed; fit: LabelFit; open
   const width = Math.max(labelWidth(fit.text, fit.size), sub ? sub.length * 6.1 + 8 : 0) + 1;
   const bottom = sub ? baseline + 18 : baseline + Math.round(fit.size * 0.3) + 3;
   return (
-    <g className={styles.group} style={fade}>
+    <g>
       <g style={style}>
         <rect x={3} y={3} width={width} height={bottom - 3} rx={3} fill={TAG} />
-        <text x={8} y={baseline} fontSize={fit.size} fontWeight={600} fill={INK}>
+        <text x={8} y={baseline} fontSize={fit.size} fontWeight={600} fill={ink}>
           {fit.text}
         </text>
         {sub && (

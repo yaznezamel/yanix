@@ -234,10 +234,18 @@ export function DesktopLab() {
     });
   }
 
-  /** Opening a box's details pauses the trace, so the story does not run on unseen. */
+  /**
+   * Opening a box's details pauses the trace, so the story does not run on
+   * unseen. On a phone the details are above the map: bring them into view.
+   */
   function handleSelect(id: NodeId) {
     setSelected(id);
     if (status === "playing") dispatch({ type: "pause" });
+    requestAnimationFrame(() =>
+      document
+        .getElementById("lab-story")
+        ?.scrollIntoView({ behavior: reduced ? "auto" : "smooth", block: "nearest" }),
+    );
   }
 
   /** Dragging the timeline pauses the trace, and lets it play on when you let go. */
@@ -448,8 +456,12 @@ export function DesktopLab() {
                   Bigger map ⤢
                 </button>
               )}
-              {tab === "software" ? (
-                <span className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-lab-muted">
+              {/* Both legends hold the same cell, so switching tabs never resizes the view under them. */}
+              <div className="grid">
+                <span
+                  aria-hidden={tab !== "software"}
+                  className={`flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-lab-muted [grid-area:1/1] ${tab === "software" ? "" : "invisible"}`}
+                >
                   {(["user", "kernel", "hardware", "network"] as const).map((layer) => (
                     <span key={layer} className="flex items-center gap-1.5">
                       <span className="size-2 rounded-sm" style={{ background: LAYER_HEX[layer] }} />
@@ -461,8 +473,10 @@ export function DesktopLab() {
                     Signal
                   </span>
                 </span>
-              ) : (
-                <span className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-lab-muted">
+                <span
+                  aria-hidden={tab !== "hardware"}
+                  className={`flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-lab-muted [grid-area:1/1] ${tab === "hardware" ? "" : "invisible"}`}
+                >
                   <span className="flex items-center gap-1.5">
                     <span className="size-2.5 rounded-sm border-2 border-signal shadow-[0_0_6px_var(--color-signal)]" />
                     Signal here
@@ -473,10 +487,10 @@ export function DesktopLab() {
                   </span>
                   <span className="flex items-center gap-1.5">
                     <span className="size-2.5 rounded-sm border border-white/15 bg-white/20 opacity-45" />
-                    Not used (dimmed)
+                    Not part of this step
                   </span>
                 </span>
-              )}
+              </div>
             </div>
             <div className="relative min-h-0 flex-1">
               <div

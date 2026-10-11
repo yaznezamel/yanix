@@ -86,6 +86,8 @@ export interface Link {
   enters?: Record<string, string>;
   /** Which side of a vertical link its label goes on (right by default). */
   labelSide?: "left" | "right";
+  /** Where along its longest straight run the label goes, from 0 to 1 (the middle by default). */
+  labelAt?: number;
   /** A cable outside the case; other links are wires on a board. */
   cable?: Cable;
 }

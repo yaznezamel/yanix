@@ -1,13 +1,16 @@
 import { describe, expect, it } from "vitest";
 import { fit, toScreen } from "./camera";
 import {
+  CLICKABLE,
   TREE,
+  clickableZoom,
   commonAncestor,
   coverage,
   fullyOpenZoom,
   labelFit,
   labelWidth,
   levelOfDetail,
+  linkShape,
   limitsFor,
   openness,
   pickAt,
@@ -174,5 +177,45 @@ describe("hardware tree", () => {
     expect(commonAncestor([part("dimm0"), part("dimm1")]).id).toBe("computer");
     expect(commonAncestor([part("cpu.core0.l1d"), part("cpu.l3")]).id).toBe("cpu");
     expect(commonAncestor([part("cpu.core0")]).id).toBe("cpu.core0");
+  });
+
+  it("dives close enough for a part's insides to be clicked, even on a small screen", () => {
+    const cpu = part("cpu");
+    expect(openness(cpu, clickableZoom(cpu))).toBeCloseTo(CLICKABLE);
+    expect(CLICKABLE).toBeGreaterThan(0.5);
+    expect(clickableZoom(part("ssd"))).toBe(0);
+  });
+
+  it("lets a tap just beside a small part pick it", () => {
+    const whole = fit(TREE.root.world, { width: 340, height: 420 }).k;
+    const flash = part("flash").world;
+    const beside = { x: flash.x - 4, y: flash.y + flash.h / 2 };
+    expect(pickAt(TREE, whole, beside)).toBeNull();
+    expect(pickAt(TREE, whole, beside, 12 / whole)?.id).toBe("flash");
+  });
+
+  it("wraps a thin part's name under it to its width, so neighbours' names do not run together", () => {
+    const tiny = 0.2;
+    const fitted = labelFit(part("dimm0"), tiny);
+    expect(fitted.place).toBe("below");
+    if (fitted.place === "below") expect(fitted.lines).toEqual(["RAM", "1"]);
+  });
+
+  it("names frames and wires only when there is room, not on a phone's overview", () => {
+    const small = { width: 340, height: 420 };
+    const phone = levelOfDetail(TREE, fit(TREE.root.world, small), small);
+    expect(phone.legends.size).toBe(0);
+    expect(phone.linkLabels.size).toBe(0);
+    // The map panel beside the screen on a 1280 px laptop is about 490 px wide.
+    const narrow = { width: 490, height: 700 };
+    const laptop = levelOfDetail(TREE, fit(TREE.root.world, narrow), narrow);
+    expect(laptop.legends).toEqual(new Set(["computer:Motherboard", "computer:Outside the case"]));
+    expect(laptop.linkLabels.size).toBeGreaterThan(0);
+  });
+
+  it("puts a wire's name where the link asks along its longest run", () => {
+    const usb = TREE.root.part.links!.find((l) => l.id === "usb")!;
+    const { label } = linkShape(TREE.root, usb);
+    expect(label.y).toBeCloseTo(720 + 0.25 * 110);
   });
 });

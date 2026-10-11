@@ -83,7 +83,7 @@ const CORE_UNITS: Part[] = [
     kind: "cache",
     box: { x: 660, y: 780, w: 290, h: 180 },
     about:
-      "Caches recent translations from virtual to physical addresses. On a miss, a page walker reads the page tables in memory; if there is no valid mapping, the CPU raises a page fault for the kernel.",
+      "The TLB (translation lookaside buffer) caches recent translations from virtual to physical addresses. On a miss, a page walker reads the page tables in memory; if there is no valid mapping, the CPU raises a page fault for the kernel.",
   },
   {
     key: "l2",
@@ -124,7 +124,7 @@ const CPU: Part = {
   // Later than its cores' labels need: the lid stays on in the overview, and comes off as you zoom in.
   openAt: 330,
   about:
-    "Runs every instruction, of your programs and of the kernel. It reads and writes RAM through its own memory controller and talks to fast devices, such as the graphics card and the SSD, over PCIe (the fast serial links inside a PC); slower devices go through the chipset.",
+    "Runs every instruction, of your programs and of the kernel. It reads and writes RAM through its own memory controller and talks to fast devices, such as the graphics card and the SSD, over PCIe (the fast serial links inside a PC); slower devices go through the chipset. Its insides, under the lid, are an illustrative floorplan, not a real chip's.",
   maps: ["cpu"],
   hub: "interconnect",
   children: [
@@ -302,7 +302,7 @@ export const MACHINE: Part = {
       look: "m2",
       box: { x: 70, y: 190, w: 220, h: 60 },
       about:
-        "Flash storage with its own controller, on a small M.2 card; NVMe is the protocol it speaks over PCIe. It reads commands from queues in RAM, moves the data with DMA (direct memory access: it writes RAM itself, without the CPU copying) and raises an interrupt when a command completes.",
+        "A solid-state drive (SSD): flash storage with its own controller, on a small M.2 card. NVMe is the protocol it speaks over PCIe, the fast serial links inside a PC. It reads commands from queues in RAM, moves the data with DMA (direct memory access: it writes RAM itself, without the CPU copying) and raises an interrupt when a command completes.",
       maps: ["ssd"],
     },
     {
@@ -326,7 +326,7 @@ export const MACHINE: Part = {
       look: "nic",
       box: { x: 60, y: 570, w: 150, h: 130 },
       about:
-        "Moves Ethernet frames between the cable and RAM with DMA, checks their checksums, and raises an interrupt when frames arrive. On many boards it is a chip near the back panel, connected to the chipset.",
+        "The computer's network card. It moves Ethernet frames between the cable and RAM with DMA, checks their checksums, and raises an interrupt when frames arrive. On many boards it is a chip near the back panel, connected to the chipset.",
       maps: ["nic"],
     },
     CHIPSET,
@@ -339,7 +339,7 @@ export const MACHINE: Part = {
       look: "codec",
       box: { x: 450, y: 570, w: 140, h: 130 },
       about:
-        "Converts digital samples into the analog signal for the speakers (a digital-to-analog converter, DAC), and a microphone's signal back into samples. It gets its samples from the chipset's HD Audio controller.",
+        "Converts digital samples into the analog signal for the speakers (a digital-to-analog converter, DAC), and a microphone's signal back into samples. It gets its samples from the chipset's HD Audio controller; together they are what is often called the sound card.",
       maps: ["hda"],
     },
     {
@@ -351,7 +351,7 @@ export const MACHINE: Part = {
       look: "gpu",
       box: { x: 630, y: 540, w: 320, h: 160 },
       about:
-        "The GPU draws the desktop into a framebuffer, and its display controller sends that picture to the monitor at a fixed refresh rate. It sits in the long PCIe x16 slot, wired to the CPU.",
+        "Its GPU (graphics processing unit) draws the desktop into a framebuffer, the picture held in memory, and its display controller sends that picture to the monitor at a fixed refresh rate. It sits in the long PCIe x16 slot (16 lanes, the widest), wired to the CPU.",
       maps: ["display"],
     },
     {
@@ -395,7 +395,8 @@ export const MACHINE: Part = {
       kind: "peripheral",
       look: "monitor",
       box: { x: 690, y: 810, w: 270, h: 150 },
-      about: "Shows the picture the graphics card sends over the cable, redrawn at a fixed refresh rate.",
+      about:
+        "Shows the picture the graphics card sends over the cable (DisplayPort or HDMI, the two common display connections), redrawn at a fixed refresh rate.",
       maps: ["display"],
     },
   ],
@@ -474,6 +475,8 @@ export const MACHINE: Part = {
       points: [[330, 720], [330, 830]],
       enters: { chipset: "usb" },
       cable: "usb",
+      // Above the frame around the devices, whose name sits on its top edge.
+      labelAt: 0.25,
     },
     {
       id: "jack",

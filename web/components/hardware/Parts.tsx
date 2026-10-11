@@ -168,13 +168,15 @@ function PartBox({
   const lit = state === "current" || state === "touched";
   const art = drawn ? partArt(node) : null;
   const box = { x: w.x, y: w.y, width: w.w, height: w.h, rx: Math.min(w.w, w.h) * 0.03 };
+  // Screen readers hear the name and how the step uses the part; what it does is its description.
+  const said = { current: ", the signal is here", touched: ", used in this step", dim: ", not part of this step", idle: "" };
 
   return (
     <g
       role="button"
       tabIndex={tabbable ? 0 : -1}
       aria-hidden={reachable ? undefined : true}
-      aria-label={`${part.label}. ${part.about}`}
+      aria-label={`${part.label}${said[state]}`}
       data-part={node.id}
       className={styles.part}
       onKeyDown={(e) => {
@@ -191,6 +193,7 @@ function PartBox({
         if (e.currentTarget.matches(":focus-visible")) onReveal(node);
       }}
     >
+      <desc>{part.about}</desc>
       {art && (
         <g transform={`translate(${w.x} ${w.y})`}>
           {art.base}
