@@ -37,6 +37,11 @@ export interface Link {
   label: string;
   /** Polyline in the parent's inner coordinates, from `from` to `to`. */
   points: [number, number][];
+  /**
+   * Where the link arrives inside an end that has parts of its own, by that
+   * end's key: { cpu: "io" } means it reaches the CPU's I/O block.
+   */
+  enters?: Record<string, string>;
 }
 
 /** A labelled outline that groups children visually, such as the motherboard. */
@@ -65,8 +70,10 @@ export interface Part {
   about: string;
   /** Lab map nodes this part stands for: it lights up when a trace reaches them. */
   maps?: NodeId[];
-  /** Software in these layers runs on this part (the CPU runs user programs and the kernel). */
+  /** Software in these layers runs on this part (a CPU core runs user programs and the kernel). */
   runs?: ("user" | "kernel")[];
+  /** The child that connects the other children, such as a CPU's interconnect. */
+  hub?: string;
   /**
    * On-screen width, in pixels, at which the children start to appear.
    * Defaults to a width at which the narrowest child gets room for its label.

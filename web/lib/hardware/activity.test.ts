@@ -18,7 +18,10 @@ describe("hardware activity", () => {
     const dma = step(["ssd", "ram", "cpu"]);
     const start = activityAt(TREE, dma, 0);
     expect([...start.current]).toEqual(["ssd"]);
-    expect(start.touched).toEqual(new Set(["ssd", "dimm0", "dimm1", "cpu"]));
+    // The DMA crosses the CPU: in at the I/O block, through the interconnect, out of the memory controller.
+    expect(start.touched).toEqual(
+      new Set(["ssd", "dimm0", "dimm1", "cpu", "cpu.io", "cpu.interconnect", "cpu.imc"]),
+    );
     // The hop under way already shows: SSD to the CPU's PCIe, then a memory channel.
     expect(start.links).toEqual(
       new Set(["computer:pcie-ssd", "computer:channel-a", "computer:channel-b"]),
@@ -27,11 +30,24 @@ describe("hardware activity", () => {
     expect([...end.current]).toEqual(["cpu"]);
   });
 
-  it("runs kernel and user code on the CPU", () => {
+  it("runs kernel and user code on core 0 of the CPU", () => {
     const syscall = step(["browser", "syscall", "vfs"]);
     const now = activityAt(TREE, syscall, 1);
-    expect([...now.current]).toEqual(["cpu"]);
+    expect(now.current).toEqual(new Set(["cpu", "cpu.core0"]));
     expect(now.links.size).toBe(0);
+  });
+
+  it("sends a disk command from core 0 through the interconnect and the I/O block", () => {
+    const submit = activityAt(TREE, step(["nvme", "ssd"]), 1);
+    expect([...submit.links]).toEqual(["computer:pcie-ssd"]);
+    for (const id of ["cpu.core0", "cpu.interconnect", "cpu.io", "ssd"]) expect(submit.touched.has(id)).toBe(true);
+    expect(submit.touched.has("cpu.imc")).toBe(false);
+  });
+
+  it("keeps the page cache in RAM: the kernel's lookup lights the RAM sticks too", () => {
+    const lookup = activityAt(TREE, step(["vfs", "pagecache"]), 1);
+    for (const id of ["cpu.core0", "dimm0", "dimm1"]) expect(lookup.current.has(id)).toBe(true);
+    expect(lookup.links).toEqual(new Set(["computer:channel-a", "computer:channel-b"]));
   });
 
   it("makes a busy controller's chip busy too", () => {

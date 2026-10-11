@@ -1,6 +1,6 @@
 import { FIT_MARGIN, fit, visibleBox, type Camera, type Limits, type Point, type Size } from "./camera";
 import { MACHINE } from "./hierarchy";
-import type { Box, Part } from "./types";
+import type { Box, Link, Part } from "./types";
 
 // The hierarchy placed in one world coordinate space, plus the questions the
 // view asks about it while you zoom: which parts are big enough to show their
@@ -28,9 +28,83 @@ export interface Tree {
   all: Placed[];
 }
 
-/** Approximate width in pixels of a 12 px label, with a little padding. */
-export function labelWidth(text: string): number {
-  return text.length * 6.8 + 8;
+/** Approximate width in pixels of a label at a font size (12 px by default), with a little padding. */
+export function labelWidth(text: string, size = 12): number {
+  return text.length * size * 0.567 + 8;
+}
+
+/** Sizes a part's name may shrink to, in pixels, before it moves under its box. */
+const LABEL_SIZES = [12, 10.5, 9] as const;
+
+/** How a part's name is shown at a zoom: the largest form that fits, never faded half way. */
+export type LabelFit =
+  | { place: "inside"; text: string; size: number; sub: boolean }
+  | { place: "below"; lines: string[]; size: number }
+  | { place: "none" };
+
+/** Words packed into lines no wider than `width` pixels at a font size. */
+function wrap(text: string, size: number, width: number): string[] {
+  const lines: string[] = [];
+  for (const word of text.split(" ")) {
+    const last = lines[lines.length - 1];
+    if (last !== undefined && labelWidth(`${last} ${word}`, size) <= width) lines[lines.length - 1] = `${last} ${word}`;
+    else lines.push(word);
+  }
+  return lines;
+}
+
+export function labelFit(p: Placed, k: number): LabelFit {
+  const { part, world } = p;
+  const vertical = isVertical(world);
+  const along = (vertical ? world.h : world.w) * k;
+  const across = (vertical ? world.w : world.h) * k;
+  const names = part.short ? [part.label, part.short] : [part.label];
+  for (const size of LABEL_SIZES) {
+    if (across < size + 8) continue;
+    for (const text of names) {
+      if (labelWidth(text, size) > along) continue;
+      const sub = size === 12 && part.sub !== undefined && across >= 44 && part.sub.length * 6 + 8 <= along;
+      return { place: "inside", text, size, sub };
+    }
+  }
+  // Parts of the whole computer always keep a name, under the box if need be,
+  // wrapped to the box's width so neighbours' names do not run together.
+  if (p.depth === 1) return { place: "below", lines: wrap(part.short ?? part.label, 10, Math.max(along + 12, 44)), size: 10 };
+  return { place: "none" };
+}
+
+/** A link in world coordinates, and where its label goes: by the middle of its longest straight run. */
+export interface LinkShape {
+  points: Point[];
+  label: { x: number; y: number; length: number; vertical: boolean };
+}
+
+const shapes = new Map<string, LinkShape>();
+
+export function linkShape(parent: Placed, link: Link): LinkShape {
+  const key = `${parent.id}:${link.id}`;
+  const cached = shapes.get(key);
+  if (cached) return cached;
+  const points = link.points.map(([x, y]) => ({
+    x: parent.world.x + x * parent.unit,
+    y: parent.world.y + y * parent.unit,
+  }));
+  let label = { x: 0, y: 0, length: 0, vertical: false };
+  for (let i = 1; i < points.length; i++) {
+    const a = points[i - 1]!;
+    const b = points[i]!;
+    const length = Math.hypot(b.x - a.x, b.y - a.y);
+    if (length > label.length) label = { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2, length, vertical: a.x === b.x };
+  }
+  const shape = { points, label };
+  shapes.set(key, shape);
+  return shape;
+}
+
+/** A link's label shows once its straight run is long enough on screen to hold it. */
+export function linkLabelFits(parent: Placed, link: Link, k: number): boolean {
+  const { label } = linkShape(parent, link);
+  return label.length * k >= (label.vertical ? 40 : link.label.length * 6 + 8);
 }
 
 /** A tall, thin part (a RAM stick) gets its label written along its length. */
@@ -120,6 +194,12 @@ export function openness(p: Placed, k: number): number {
   return clamp01((p.world.w * k - OPEN_FROM * p.openAt) / (OPEN_SPAN * p.openAt));
 }
 
+/** The zoom at which a part's children are fully shown (0 for a part with none). */
+export function fullyOpenZoom(p: Placed): number {
+  if (p.children.length === 0) return 0;
+  return ((OPEN_FROM + OPEN_SPAN) * p.openAt) / p.world.w;
+}
+
 /** The children's opacity as CSS, so it follows the --zoom variable without a React render. */
 export function opennessCss(p: Placed): string {
   if (p.children.length === 0) return "0";
@@ -138,6 +218,18 @@ export interface Detail {
   open: Set<string>;
   /** Parts you can click, tab to and hover: their parent is at least half faded in. */
   interactive: Set<string>;
+  /** How each drawn part's name is shown. */
+  labels: Map<string, LabelFit>;
+  /** Links, as "parentId:linkId", whose labels fit. */
+  linkLabels: Set<string>;
+  /** Changes whenever anything above does, so a frame that changes nothing renders nothing. */
+  signature: string;
+}
+
+function fitKey(fit: LabelFit): string {
+  if (fit.place === "none") return "-";
+  if (fit.place === "below") return `b${fit.size}${fit.lines.join("/")}`;
+  return `i${fit.size}${fit.text}${fit.sub ? "+" : ""}`;
 }
 
 /** What to draw for a camera: drawing only what is on screen and big enough keeps every frame cheap. */
@@ -146,19 +238,32 @@ export function levelOfDetail(tree: Tree, cam: Camera, view: Size): Detail {
   const margin = { x: seen.x - seen.w / 4, y: seen.y - seen.h / 4, w: seen.w * 1.5, h: seen.h * 1.5 };
   const open = new Set<string>();
   const interactive = new Set<string>();
+  const labels = new Map<string, LabelFit>();
+  const linkLabels = new Set<string>();
+  const signature: string[] = [];
 
   function visit(p: Placed, reachable: boolean) {
     const o = openness(p, cam.k);
     if (o <= 0 || !intersects(p.world, margin)) return;
     open.add(p.id);
+    signature.push(`[${p.id}`);
+    for (const link of p.part.links ?? []) {
+      if (!linkLabelFits(p, link, cam.k)) continue;
+      linkLabels.add(`${p.id}:${link.id}`);
+      signature.push(link.id);
+    }
     const childrenReachable = reachable && o >= 0.5;
     for (const child of p.children) {
       if (childrenReachable) interactive.add(child.id);
+      const fit = labelFit(child, cam.k);
+      labels.set(child.id, fit);
+      signature.push(`${child.part.key}${childrenReachable ? "!" : ""}${fitKey(fit)}`);
       visit(child, childrenReachable);
     }
+    signature.push("]");
   }
   visit(tree.root, true);
-  return { open, interactive };
+  return { open, interactive, labels, linkLabels, signature: signature.join(" ") };
 }
 
 /** The share of the view a part covers, from 0 to 1. */

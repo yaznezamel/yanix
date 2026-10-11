@@ -5,7 +5,9 @@ import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react"
 import { activityAt, type Activity } from "@/lib/hardware/activity";
 import {
   FIT_MARGIN,
+  NO_INSETS,
   cameraTransform,
+  centreOn,
   clampCamera,
   fit,
   flight,
@@ -20,8 +22,20 @@ import {
   type Point,
   type Size,
 } from "@/lib/hardware/camera";
-import { TREE, levelOfDetail, limitsFor, lineage, pickAt, refocus, type Detail, type Placed } from "@/lib/hardware/tree";
+import {
+  TREE,
+  fullyOpenZoom,
+  levelOfDetail,
+  limitsFor,
+  lineage,
+  pickAt,
+  refocus,
+  type Detail,
+  type Placed,
+} from "@/lib/hardware/tree";
+import { NODES } from "@/lib/xray/nodes";
 import type { Step } from "@/lib/xray/types";
+import { LAYER_NAME } from "@/components/lab/palette";
 import styles from "./hardware.module.css";
 import { PartView } from "./Parts";
 
@@ -46,17 +60,16 @@ interface HardwareViewProps {
 const KEY_ZOOM = 1.6;
 const KEY_PAN = 80;
 const CLICK_SLOP = 5;
+/** Below this width the lab scrolls as a page, so the view leaves plain scrolling and one-finger swipes to it. */
+const IMMERSIVE = "(min-width: 80rem)";
 
 const INITIAL_DETAIL: Detail = {
   open: new Set([TREE.root.id]),
   interactive: new Set(TREE.root.children.map((c) => c.id)),
+  labels: new Map(),
+  linkLabels: new Set(),
+  signature: "",
 };
-
-function sameSet(a: ReadonlySet<string>, b: ReadonlySet<string>): boolean {
-  if (a.size !== b.size) return false;
-  for (const id of a) if (!b.has(id)) return false;
-  return true;
-}
 
 function distance(a: Point, b: Point): number {
   return Math.hypot(a.x - b.x, a.y - b.y);
@@ -90,28 +103,41 @@ export function HardwareView({ step, reached, reduced }: HardwareViewProps) {
   const gestureRef = useRef<Gesture | null>(null);
   const pointersRef = useRef(new Map<number, Point>());
   const reducedRef = useRef(reduced);
+  // Layout reads are cached: reading layout in the middle of a zoom frame
+  // forces the browser to recompute styles and layout there and then.
+  const rectRef = useRef<DOMRect | null>(null);
+  const insetsRef = useRef<Insets>(NO_INSETS);
+  const lastWheel = useRef(0);
+  // Focusing a part from code must not also trigger "bring it into view".
+  const quietFocus = useRef(false);
+  const nudgeTimer = useRef(0);
   const [detail, setDetail] = useState<Detail>(INITIAL_DETAIL);
   const [focus, setFocus] = useState(TREE.root.id);
   const [ready, setReady] = useState(false);
+  const [nudge, setNudge] = useState<string | null>(null);
   const hintId = useId();
 
   useEffect(() => {
     reducedRef.current = reduced;
   }, [reduced]);
 
-  /** The breadcrumb and the description cover the top and bottom of the view; frame parts between them. */
-  const insets = useCallback((): Insets => {
-    const svg = svgRef.current?.getBoundingClientRect();
-    const nav = navRef.current?.getBoundingClientRect();
-    const about = aboutRef.current?.getBoundingClientRect();
-    if (!svg) return { top: 0, right: 0, bottom: 0, left: 0 };
-    return {
-      top: nav ? Math.max(0, nav.bottom - svg.top) : 0,
-      right: 0,
-      bottom: about ? Math.max(0, svg.bottom - about.top) : 0,
-      left: 0,
-    };
+  /** The breadcrumb and the description cover the top and bottom of the view; parts are framed between them. */
+  const insets = useCallback((): Insets => insetsRef.current, []);
+
+  /** Where the view is on the page, for turning pointer positions into view coordinates. */
+  const viewRect = useCallback((fresh = false): DOMRect | null => {
+    if (fresh || !rectRef.current) rectRef.current = svgRef.current?.getBoundingClientRect() ?? null;
+    return rectRef.current;
   }, []);
+
+  /** A short tip in the middle of the view, for a gesture that did something else. */
+  const showNudge = useCallback((text: string) => {
+    setNudge(text);
+    window.clearTimeout(nudgeTimer.current);
+    nudgeTimer.current = window.setTimeout(() => setNudge(null), 1800);
+  }, []);
+
+  useEffect(() => () => window.clearTimeout(nudgeTimer.current), []);
 
   const changeFocus = useCallback((id: string) => {
     if (focusRef.current === id) return;
@@ -129,9 +155,7 @@ export function HardwareView({ step, reached, reduced }: HardwareViewProps) {
       if (!cam) return;
       const size = sizeRef.current;
       const next = levelOfDetail(TREE, cam, size);
-      setDetail((prev) =>
-        sameSet(prev.open, next.open) && sameSet(prev.interactive, next.interactive) ? prev : next,
-      );
+      setDetail((prev) => (prev.signature === next.signature ? prev : next));
       if (movedByHand.current) {
         movedByHand.current = false;
         const centre = toWorld(cam, size, freeCentre(size, insets()));
@@ -183,8 +207,22 @@ export function HardwareView({ step, reached, reduced }: HardwareViewProps) {
   /** Fly to a part and frame it: the part becomes what you are looking at. */
   const dive = useCallback(
     (p: Placed) => {
+      const svg = svgRef.current;
+      const hadFocus = svg !== null && svg.contains(document.activeElement);
       changeFocus(p.id);
-      flyTo(fit(p.world, sizeRef.current, FIT_MARGIN, insets()), false);
+      const size = sizeRef.current;
+      const free = insets();
+      // Close enough that the part's insides are fully shown, even if its edges go a little off screen.
+      const framed = fit(p.world, size, FIT_MARGIN, free);
+      const k = Math.max(framed.k, Math.min(fullyOpenZoom(p), framed.k * 1.35));
+      flyTo(centreOn(p.world, k, free), false);
+      // Keep keyboard focus on what you are looking at; the part you left may disappear.
+      if (hadFocus && svg) {
+        const el = p.depth > 0 ? svg.querySelector<SVGGElement>(`[data-part="${p.id}"]`) : null;
+        quietFocus.current = true;
+        (el ?? svg).focus({ preventScroll: true });
+        quietFocus.current = false;
+      }
     },
     [changeFocus, flyTo, insets],
   );
@@ -211,7 +249,7 @@ export function HardwareView({ step, reached, reduced }: HardwareViewProps) {
   const reveal = useCallback(
     (p: Placed) => {
       const cam = camRef.current;
-      if (!cam) return;
+      if (!cam || quietFocus.current) return;
       const size = sizeRef.current;
       const a = toScreen(cam, size, { x: p.world.x, y: p.world.y });
       const b = toScreen(cam, size, { x: p.world.x + p.world.w, y: p.world.y + p.world.h });
@@ -220,17 +258,30 @@ export function HardwareView({ step, reached, reduced }: HardwareViewProps) {
         return;
       }
       const framed = fit(p.world, size, FIT_MARGIN, free);
-      flyTo({ ...framed, k: Math.min(cam.k, framed.k) }, true);
+      flyTo(centreOn(p.world, Math.min(cam.k, framed.k), free), true);
     },
     [flyTo, insets],
   );
 
   // Size: frame the whole computer the first time, then keep what you were
-  // looking at when the panel changes size.
+  // looking at when the panel changes size. The breadcrumb and the description
+  // are watched too, since they decide where parts are framed.
   useEffect(() => {
     const svg = svgRef.current;
     if (!svg) return;
-    const observer = new ResizeObserver(([entry]) => {
+    const observer = new ResizeObserver((entries) => {
+      // Called after layout, so these reads are free.
+      const rect = svg.getBoundingClientRect();
+      rectRef.current = rect;
+      const nav = navRef.current?.getBoundingClientRect();
+      const about = aboutRef.current?.getBoundingClientRect();
+      insetsRef.current = {
+        top: nav ? Math.max(0, nav.bottom - rect.top) : 0,
+        right: 0,
+        bottom: about ? Math.max(0, rect.bottom - about.top) : 0,
+        left: 0,
+      };
+      const entry = entries.find((e) => e.target === svg);
       if (!entry) return;
       const { width, height } = entry.contentRect;
       if (width < 1 || height < 1) return;
@@ -242,7 +293,7 @@ export function HardwareView({ step, reached, reduced }: HardwareViewProps) {
       stopFlight();
       const cam = camRef.current;
       if (!cam || before.width === 0) {
-        apply(clampCamera(fit(TREE.root.world, size, FIT_MARGIN, insets()), limits), false);
+        apply(clampCamera(fit(TREE.root.world, size, FIT_MARGIN, insetsRef.current), limits), false);
       } else {
         const scale = Math.min(width / before.width, height / before.height);
         apply(clampCamera({ ...cam, k: cam.k * scale }, limits), false);
@@ -250,24 +301,43 @@ export function HardwareView({ step, reached, reduced }: HardwareViewProps) {
       setReady(true);
     });
     observer.observe(svg);
-    return () => observer.disconnect();
-  }, [apply, stopFlight, insets]);
+    if (navRef.current) observer.observe(navRef.current);
+    if (aboutRef.current) observer.observe(aboutRef.current);
+    // Scrolling the page moves the view without resizing it.
+    const stale = () => {
+      rectRef.current = null;
+    };
+    window.addEventListener("scroll", stale, { capture: true, passive: true });
+    return () => {
+      observer.disconnect();
+      window.removeEventListener("scroll", stale, { capture: true });
+    };
+  }, [apply, stopFlight]);
 
   // The wheel zooms around the pointer. React's onWheel is passive, so it
   // cannot stop the page from scrolling; a native listener can.
   useEffect(() => {
     const svg = svgRef.current;
     if (!svg) return;
+    const immersive = window.matchMedia(IMMERSIVE);
     function onWheel(e: WheelEvent) {
       const cam = camRef.current;
       const limits = limitsRef.current;
       if (!cam || !limits || !svg) return;
+      // When the lab scrolls as a page, a plain wheel scrolls it; Ctrl or ⌘ (and a trackpad pinch) zooms.
+      if (!immersive.matches && !e.ctrlKey && !e.metaKey) {
+        showNudge("Hold Ctrl or ⌘ and scroll to zoom");
+        return;
+      }
       e.preventDefault();
       stopFlight();
       // Same scaling as d3-zoom: a mouse wheel notch is about 1.15x, a trackpad pinch (ctrlKey) is finer.
       const unit = e.deltaMode === 1 ? 0.05 : e.deltaMode ? 1 : 0.002;
       const factor = 2 ** (-e.deltaY * unit * (e.ctrlKey ? 10 : 1));
-      const rect = svg.getBoundingClientRect();
+      // Measure where the view is once per burst of wheel events, not on every event.
+      const rect = viewRect(e.timeStamp - lastWheel.current > 250);
+      lastWheel.current = e.timeStamp;
+      if (!rect) return;
       apply(
         zoomAround(cam, sizeRef.current, factor, { x: e.clientX - rect.left, y: e.clientY - rect.top }, limits),
         true,
@@ -275,11 +345,11 @@ export function HardwareView({ step, reached, reduced }: HardwareViewProps) {
     }
     svg.addEventListener("wheel", onWheel, { passive: false });
     return () => svg.removeEventListener("wheel", onWheel);
-  }, [apply, stopFlight]);
+  }, [apply, stopFlight, viewRect, showNudge]);
 
   function local(e: React.PointerEvent): Point {
-    const rect = e.currentTarget.getBoundingClientRect();
-    return { x: e.clientX - rect.left, y: e.clientY - rect.top };
+    const rect = viewRect();
+    return rect ? { x: e.clientX - rect.left, y: e.clientY - rect.top } : { x: 0, y: 0 };
   }
 
   function onPointerDown(e: React.PointerEvent<SVGSVGElement>) {
@@ -292,6 +362,8 @@ export function HardwareView({ step, reached, reduced }: HardwareViewProps) {
     e.currentTarget.focus({ preventScroll: true });
     e.currentTarget.setPointerCapture(e.pointerId);
     stopFlight();
+    // One fresh measurement per gesture; moves reuse it.
+    viewRect(true);
     const p = local(e);
     const pointers = pointersRef.current;
     pointers.set(e.pointerId, p);
@@ -330,6 +402,10 @@ export function HardwareView({ step, reached, reduced }: HardwareViewProps) {
     const gesture = gestureRef.current;
     pointers.delete(e.pointerId);
     const cam = camRef.current;
+    // The browser took a one-finger swipe to scroll the page (below the wide layout).
+    if (e.type === "pointercancel" && e.pointerType === "touch" && gesture?.kind === "drag" && pointers.size === 0) {
+      showNudge("Use two fingers to move the drawing");
+    }
     if (e.type === "pointerup" && gesture?.kind === "drag" && !gesture.moved && pointers.size === 0 && cam) {
       const hit = pickAt(TREE, cam.k, toWorld(cam, sizeRef.current, local(e)));
       if (hit) dive(hit);
@@ -387,6 +463,9 @@ export function HardwareView({ step, reached, reduced }: HardwareViewProps) {
   const focused = TREE.byId.get(focus) ?? TREE.root;
   const trail = lineage(focused);
   const busy = step ? busiest(activity) : [];
+  // The program or kernel code the signal is in, which a core is running.
+  const here = step ? NODES[step.path[Math.min(reached, step.path.length - 1)]!] : null;
+  const running = here && (here.layer === "user" || here.layer === "kernel") ? here : null;
 
   return (
     <div className="relative h-full w-full" onKeyDown={onKeyDown}>
@@ -432,7 +511,7 @@ export function HardwareView({ step, reached, reduced }: HardwareViewProps) {
                   type="button"
                   onClick={() => dive(p)}
                   aria-current={last ? "location" : undefined}
-                  className={`pointer-events-auto rounded px-1.5 py-0.5 ${
+                  className={`pointer-events-auto min-h-6 rounded px-1.5 ${
                     last ? "bg-white/10 font-semibold text-lab-ink" : "text-lab-muted hover:bg-white/5 hover:text-lab-ink"
                   }`}
                 >
@@ -449,6 +528,17 @@ export function HardwareView({ step, reached, reduced }: HardwareViewProps) {
           Illustrative layout
         </span>
       </div>
+
+      {nudge && (
+        <div
+          role="status"
+          className="pointer-events-none absolute inset-x-0 top-1/3 flex justify-center px-4"
+        >
+          <span className="rounded-full border border-lab-line bg-lab-bg/90 px-3 py-1.5 text-[12.5px] text-lab-ink shadow-lg">
+            {nudge}
+          </span>
+        </div>
+      )}
 
       <div className="absolute right-3 bottom-3 flex flex-col gap-1.5">
         <ControlButton label="Zoom in" onClick={() => zoomBy(KEY_ZOOM)}>
@@ -471,15 +561,46 @@ export function HardwareView({ step, reached, reduced }: HardwareViewProps) {
           <span className="text-lab-ink/80">{focused.part.about}</span>
         </p>
         {busy.length > 0 && (
-          <p className="mt-1 font-mono text-[11px] text-signal">
-            Signal at: {busy.map((p) => p.part.label).join(" and ")}
-          </p>
+          <div className="mt-1.5 flex flex-wrap items-center gap-x-1.5 gap-y-1 text-[12px]">
+            <span className="font-mono text-[10.5px] uppercase tracking-[0.1em] text-signal">Signal at</span>
+            {busy.map((p) => (
+              <span key={p.id} className="flex flex-wrap items-center gap-1.5">
+                <button
+                  type="button"
+                  onClick={() => dive(p)}
+                  title={`Zoom to ${p.part.label}`}
+                  className="pointer-events-auto min-h-6 rounded border border-signal/50 px-1.5 text-signal hover:bg-signal/10"
+                >
+                  {lineage(p)
+                    .slice(1)
+                    .map((q) => q.part.label)
+                    .join(" › ")}
+                </button>
+                {running && p.part.runs?.includes(running.layer as "user" | "kernel") && (
+                  <span className="text-lab-ink/85">
+                    running {running.label} ({LAYER_NAME[running.layer].toLowerCase()})
+                  </span>
+                )}
+              </span>
+            ))}
+          </div>
         )}
         <p id={hintId} className="mt-1 text-[11px] text-lab-muted">
-          <span className="pointer-coarse:hidden">
+          {focused.depth > 0 && focused.children.length === 0 && (
+            <span className="block text-lab-ink/70">
+              This model has nothing smaller inside this part yet. Esc or the breadcrumb goes back up.
+            </span>
+          )}
+          <span className="hidden xl:inline pointer-coarse:hidden">
             Click a part to zoom into it · scroll to zoom · drag to move · Esc goes up a level
           </span>
-          <span className="hidden pointer-coarse:inline">Tap a part to zoom into it · pinch to zoom · drag to move</span>
+          <span className="xl:hidden pointer-coarse:hidden">
+            Click a part to zoom into it · Ctrl or ⌘ + scroll to zoom · drag to move · Esc goes up a level
+          </span>
+          <span className="hidden pointer-coarse:xl:inline">Tap a part to zoom into it · pinch to zoom · drag to move</span>
+          <span className="hidden pointer-coarse:inline pointer-coarse:xl:hidden">
+            Tap a part to zoom into it · two fingers move and zoom
+          </span>
         </p>
       </div>
     </div>

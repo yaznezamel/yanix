@@ -110,13 +110,31 @@ describe("hardware hierarchy", () => {
     }
   });
 
-  it("maps only hardware and network nodes directly; software runs on the CPU", () => {
+  it("maps hardware and network nodes, and the kernel's data in RAM; code runs on core 0", () => {
+    // Kernel nodes that are mostly data held in memory: the page cache, and the page tables.
+    const inMemory = new Set(["pagecache", "mm"]);
     for (const p of TREE.all) {
       for (const node of p.part.maps ?? []) {
-        expect(["hardware", "network"], `${p.id} maps ${node}`).toContain(NODES[node].layer);
+        if (inMemory.has(node)) expect(p.part.kind, `${p.id} maps ${node}`).toBe("module");
+        else expect(["hardware", "network"], `${p.id} maps ${node}`).toContain(NODES[node].layer);
       }
     }
-    expect(partsFor(TREE, "vfs").map((p) => p.id)).toEqual(["cpu"]);
-    expect(partsFor(TREE, "browser").map((p) => p.id)).toEqual(["cpu"]);
+    expect(partsFor(TREE, "vfs").map((p) => p.id)).toEqual(["cpu.core0"]);
+    expect(partsFor(TREE, "browser").map((p) => p.id)).toEqual(["cpu.core0"]);
+    expect(partsFor(TREE, "cpu").map((p) => p.id)).toEqual(["cpu"]);
+  });
+
+  it("points links and hubs at parts that exist", () => {
+    for (const p of withChildren) {
+      const keys = new Set(p.part.children!.map((c) => c.key));
+      if (p.part.hub) expect(keys.has(p.part.hub), `${p.id} hub`).toBe(true);
+      for (const link of p.part.links ?? []) {
+        for (const [end, inside] of Object.entries(link.enters ?? {})) {
+          expect([link.from, link.to], `${link.id} enters ${end}`).toContain(end);
+          const target = p.part.children!.find((c) => c.key === end)!;
+          expect(target.children?.some((c) => c.key === inside), `${link.id} enters ${end}.${inside}`).toBe(true);
+        }
+      }
+    }
   });
 });

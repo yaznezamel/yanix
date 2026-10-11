@@ -3,6 +3,8 @@ import { fit, toScreen } from "./camera";
 import {
   TREE,
   coverage,
+  fullyOpenZoom,
+  labelFit,
   labelWidth,
   levelOfDetail,
   limitsFor,
@@ -92,6 +94,41 @@ describe("hardware tree", () => {
     // A long, thin part never fills the view, but stays in focus once you fly to it.
     expect(refocus(TREE, ssd, view, "ssd").id).toBe("ssd");
     expect(refocus(TREE, ssd, view, "computer").id).toBe("computer");
+  });
+
+  it("always names the parts of the whole computer, shrinking or moving the name rather than hiding it", () => {
+    // The map panel beside the screen on a 1280 px laptop is about 490 px wide.
+    const narrow = { width: 490, height: 700 };
+    const k = fit(TREE.root.world, narrow).k;
+    for (const p of TREE.root.children) expect(labelFit(p, k).place, p.id).not.toBe("none");
+    const keyboard = labelFit(part("keyboard"), k);
+    expect(keyboard.place).toBe("inside");
+    if (keyboard.place === "inside") expect(keyboard.size).toBeLessThan(12);
+    // On a phone, a small part's name moves under its box.
+    expect(labelFit(part("flash"), fit(TREE.root.world, { width: 360, height: 520 }).k).place).toBe("below");
+    // Parts inside the CPU only get a name once they are big enough for one.
+    expect(labelFit(part("cpu.core0"), k).place).toBe("none");
+  });
+
+  it("switches between the full and the short name at a fixed size, never half way", () => {
+    const gpu = part("gpu");
+    const full = labelWidth(gpu.part.label) / gpu.world.w;
+    expect(labelFit(gpu, full * 1.01)).toMatchObject({ place: "inside", text: "Graphics card", size: 12 });
+    expect(labelFit(gpu, full * 0.99)).toMatchObject({ place: "inside", text: "GPU", size: 12 });
+  });
+
+  it("dives close enough for a part's insides to be fully shown", () => {
+    for (const id of ["cpu", "cpu.core0", "chipset"]) {
+      expect(openness(part(id), fullyOpenZoom(part(id)))).toBeCloseTo(1);
+    }
+    expect(fullyOpenZoom(part("dimm0"))).toBe(0);
+  });
+
+  it("gives the level of detail a signature that only changes when the drawing does", () => {
+    const cam = fit(part("cpu").world, view);
+    const a = levelOfDetail(TREE, cam, view);
+    expect(levelOfDetail(TREE, { ...cam, x: cam.x + 0.01 }, view).signature).toBe(a.signature);
+    expect(levelOfDetail(TREE, { ...cam, k: cam.k * 3 }, view).signature).not.toBe(a.signature);
   });
 
   it("lets you zoom from a bit beyond the whole computer to well into the smallest part", () => {

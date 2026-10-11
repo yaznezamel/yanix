@@ -52,7 +52,11 @@ export function fit(box: Box, view: Size, margin = FIT_MARGIN, insets: Insets = 
     height: Math.max(1, view.height - insets.top - insets.bottom),
   };
   const k = Math.min((free.width * (1 - 2 * margin)) / box.w, (free.height * (1 - 2 * margin)) / box.h);
-  // Shift the camera so the box sits in the middle of the free area, not of the whole view.
+  return centreOn(box, k, insets);
+}
+
+/** The camera at zoom k that puts a box's centre in the middle of the part of the view the insets leave free. */
+export function centreOn(box: Box, k: number, insets: Insets = NO_INSETS): Camera {
   return {
     x: box.x + box.w / 2 - (insets.left - insets.right) / (2 * k),
     y: box.y + box.h / 2 - (insets.top - insets.bottom) / (2 * k),

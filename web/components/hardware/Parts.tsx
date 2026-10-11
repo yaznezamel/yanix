@@ -2,19 +2,25 @@
 
 import { LAYER_HEX, SIGNAL, alpha } from "@/components/lab/palette";
 import type { Activity } from "@/lib/hardware/activity";
-import { isVertical, labelWidth, opennessCss, type Detail, type Placed } from "@/lib/hardware/tree";
+import { isVertical, linkShape, opennessCss, type Detail, type LabelFit, type Placed } from "@/lib/hardware/tree";
 import type { Frame, Link } from "@/lib/hardware/types";
 import styles from "./hardware.module.css";
 
 // How each part, wire and frame of the hardware view is drawn. Phase 1 draws
 // every part as a plain box; later phases pick a drawing by the part's kind.
 // Sizes are in world units, except labels: they are scaled by 1 / --zoom, so
-// they stay the same size on screen, and fade in once they fit their box.
+// they stay the same size on screen. Which name a part shows, and at what
+// size, comes from the level of detail (lib/hardware/tree.ts).
 
 type PartState = "idle" | "current" | "touched" | "dim";
 
 const INK = "#e8edf2";
-const MUTED = "#8b96a3";
+const MUTED = "#9aa5b1";
+
+/** Counter-scales a group placed at a world point, so its contents are in screen pixels. */
+function screenSized(x: number, y: number, extra = ""): React.CSSProperties {
+  return { transform: `translate(${x}px, ${y}px) scale(calc(1 / var(--zoom)))${extra}` };
+}
 
 export function PartView({
   node,
@@ -43,18 +49,35 @@ export function PartView({
   const childrenReachable = node.children.some((c) => detail.interactive.has(c.id));
 
   return (
-    <g className={styles.group} style={{ opacity: state === "dim" ? 0.35 : 1 }}>
+    <g className={styles.group} style={{ opacity: state === "dim" ? 0.5 : 1 }}>
       {node.depth > 0 && (
-        <PartBox node={node} state={state} open={open} reachable={reachable} onDive={onDive} onReveal={onReveal} />
+        <PartBox
+          node={node}
+          state={state}
+          open={open}
+          fit={detail.labels.get(node.id)}
+          reachable={reachable}
+          onDive={onDive}
+          onReveal={onReveal}
+        />
       )}
       {open && (
         <g style={{ opacity: opennessCss(node) }} pointerEvents={childrenReachable ? undefined : "none"}>
           {node.part.frames?.map((frame) => (
             <FrameOutline key={frame.label} parent={node} frame={frame} />
           ))}
-          {node.part.links?.map((link) => (
-            <LinkView key={link.id} parent={node} link={link} lit={activity.links.has(`${node.id}:${link.id}`)} />
-          ))}
+          {node.part.links?.map((link) => {
+            const id = `${node.id}:${link.id}`;
+            return (
+              <LinkView
+                key={link.id}
+                parent={node}
+                link={link}
+                lit={activity.links.has(id)}
+                labelled={detail.linkLabels.has(id)}
+              />
+            );
+          })}
           {node.part.frames?.map((frame) => (
             <FrameLegend key={frame.label} parent={node} frame={frame} />
           ))}
@@ -75,15 +98,11 @@ export function PartView({
   );
 }
 
-/** Opacity, as CSS, that is 1 once `need` pixels fit along the box and `needAcross` across it. */
-function fitsCss(along: number, need: number, across: number, needAcross: number): string {
-  return `clamp(0, min(calc((var(--zoom) * ${along} - ${need}) / 12), calc((var(--zoom) * ${across} - ${needAcross}) / 6)), 1)`;
-}
-
 function PartBox({
   node,
   state,
   open,
+  fit,
   reachable,
   onDive,
   onReveal,
@@ -91,6 +110,7 @@ function PartBox({
   node: Placed;
   state: PartState;
   open: boolean;
+  fit: LabelFit | undefined;
   reachable: boolean;
   onDive: (p: Placed) => void;
   onReveal: (p: Placed) => void;
@@ -99,15 +119,6 @@ function PartBox({
   const hex = part.kind === "network" ? LAYER_HEX.network : LAYER_HEX.hardware;
   const lit = state === "current" || state === "touched";
   const radius = Math.min(w.w, w.h) * 0.05;
-  const vertical = isVertical(w);
-  const along = vertical ? w.h : w.w;
-  const across = vertical ? w.w : w.h;
-  const label = fitsCss(along, labelWidth(part.label), across, 20);
-  const short = part.short ? fitsCss(along, labelWidth(part.short), across, 20) : null;
-  const subWidth = part.sub ? part.sub.length * 6 + 8 : 0;
-  const sub = part.sub ? fitsCss(along, subWidth, across, 40) : null;
-  const corner = vertical ? `translate(${w.x}px, ${w.y + w.h}px)` : `translate(${w.x}px, ${w.y}px)`;
-  const scale = vertical ? "scale(calc(1 / var(--zoom))) rotate(-90deg)" : "scale(calc(1 / var(--zoom)))";
 
   return (
     <g
@@ -153,58 +164,58 @@ function PartBox({
         strokeWidth={state === "current" ? 2.4 : lit ? 1.6 : 1}
         vectorEffect="non-scaling-stroke"
       />
-      <g className={styles.label} style={{ transform: `${corner} ${scale}` }}>
-        <text x={8} y={17} fontSize={12} fontWeight={600} fill={INK} style={{ opacity: label }}>
-          {part.label}
-        </text>
-        {short && (
-          <text
-            x={8}
-            y={17}
-            fontSize={12}
-            fontWeight={600}
-            fill={INK}
-            style={{ opacity: `calc(${short} * (1 - ${label}))` }}
-          >
-            {part.short}
-          </text>
-        )}
-        {sub && (
-          <text
-            x={8}
-            y={31}
-            fontSize={10}
-            fill={MUTED}
-            className="font-mono"
-            style={{ opacity: `calc(${sub} * clamp(0, 1 - 2 * ${opennessCss(node)}, 1))` }}
-          >
-            {part.sub}
-          </text>
-        )}
-      </g>
+      {fit && <PartLabel node={node} fit={fit} open={open} />}
     </g>
   );
 }
 
-function LinkView({ parent, link, lit }: { parent: Placed; link: Link; lit: boolean }) {
-  const points = link.points.map(([x, y]) => ({
-    x: parent.world.x + x * parent.unit,
-    y: parent.world.y + y * parent.unit,
-  }));
-  const d = points.map((p, i) => `${i === 0 ? "M" : "L"} ${p.x} ${p.y}`).join(" ");
-  // The label sits by the middle of the longest straight run.
-  let best = { length: 0, x: 0, y: 0, vertical: false };
-  for (let i = 1; i < points.length; i++) {
-    const a = points[i - 1]!;
-    const b = points[i]!;
-    const length = Math.hypot(b.x - a.x, b.y - a.y);
-    if (length > best.length) best = { length, x: (a.x + b.x) / 2, y: (a.y + b.y) / 2, vertical: a.x === b.x };
+function PartLabel({ node, fit, open }: { node: Placed; fit: LabelFit; open: boolean }) {
+  const { world: w, part } = node;
+  if (fit.place === "none") return null;
+  if (fit.place === "below") {
+    return (
+      <g className={styles.label} style={screenSized(w.x + w.w / 2, w.y + w.h)}>
+        <text textAnchor="middle" fontSize={fit.size} fontWeight={600} fill={INK}>
+          {fit.lines.map((line, i) => (
+            <tspan key={i} x={0} y={fit.size + 3 + i * (fit.size + 2)}>
+              {line}
+            </tspan>
+          ))}
+        </text>
+      </g>
+    );
   }
-  const textWidth = link.label.length * 6 + 8;
-  const visible = best.vertical
-    ? `clamp(0, calc((var(--zoom) * ${best.length} - 18) / 8), 1)`
-    : `clamp(0, calc((var(--zoom) * ${best.length} - ${textWidth}) / 12), 1)`;
+  // A tall, thin part (a RAM stick) has its name written up its length.
+  const vertical = isVertical(w);
+  const style = vertical ? screenSized(w.x, w.y + w.h, " rotate(-90deg)") : screenSized(w.x, w.y);
+  const baseline = Math.round(fit.size * 1.15 + 3);
+  return (
+    <g className={styles.label} style={style}>
+      <text x={8} y={baseline} fontSize={fit.size} fontWeight={600} fill={INK}>
+        {fit.text}
+      </text>
+      {fit.sub && !open && (
+        <text x={8} y={baseline + 14} fontSize={10} fill={MUTED} className="font-mono">
+          {part.sub}
+        </text>
+      )}
+    </g>
+  );
+}
 
+function LinkView({
+  parent,
+  link,
+  lit,
+  labelled,
+}: {
+  parent: Placed;
+  link: Link;
+  lit: boolean;
+  labelled: boolean;
+}) {
+  const { points, label } = linkShape(parent, link);
+  const d = points.map((p, i) => `${i === 0 ? "M" : "L"} ${p.x} ${p.y}`).join(" ");
   return (
     <g pointerEvents="none">
       <path
@@ -215,21 +226,20 @@ function LinkView({ parent, link, lit }: { parent: Placed; link: Link; lit: bool
         strokeLinejoin="round"
         vectorEffect="non-scaling-stroke"
       />
-      <g
-        className={styles.label}
-        style={{ transform: `translate(${best.x}px, ${best.y}px) scale(calc(1 / var(--zoom)))`, opacity: visible }}
-      >
-        <text
-          x={best.vertical ? 6 : 0}
-          y={best.vertical ? 4 : 13}
-          textAnchor={best.vertical ? "start" : "middle"}
-          fontSize={10}
-          fill={lit ? SIGNAL : "rgba(255,255,255,0.5)"}
-          className="font-mono"
-        >
-          {link.label}
-        </text>
-      </g>
+      {labelled && (
+        <g className={styles.label} style={screenSized(label.x, label.y)}>
+          <text
+            x={label.vertical ? 6 : 0}
+            y={label.vertical ? 4 : 13}
+            textAnchor={label.vertical ? "start" : "middle"}
+            fontSize={10}
+            fill={lit ? SIGNAL : "rgba(255,255,255,0.62)"}
+            className="font-mono"
+          >
+            {link.label}
+          </text>
+        </g>
+      )}
     </g>
   );
 }
@@ -267,9 +277,9 @@ function FrameLegend({ parent, frame }: { parent: Placed; frame: Frame }) {
   const text = frame.label.toUpperCase();
   const width = text.length * 7.8 + 12;
   return (
-    <g className={styles.label} style={{ transform: `translate(${b.x}px, ${b.y}px) scale(calc(1 / var(--zoom)))` }}>
+    <g className={styles.label} style={screenSized(b.x, b.y)}>
       <rect x={14} y={-8} width={width} height={16} rx={3} fill="#0e1217" />
-      <text x={20} y={4} fontSize={10.5} letterSpacing="0.14em" fill="rgba(255,255,255,0.45)" className="font-mono">
+      <text x={20} y={4} fontSize={10.5} letterSpacing="0.14em" fill="rgba(255,255,255,0.55)" className="font-mono">
         {text}
       </text>
     </g>

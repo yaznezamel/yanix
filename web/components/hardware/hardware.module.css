@@ -2,10 +2,19 @@
    on screen at any zoom: the camera sets --zoom on the SVG, and labels scale by
    1 / --zoom while lines use vector-effect: non-scaling-stroke. */
 
+/* Below the wide layout the lab scrolls as a page: one finger scrolls it and
+   two fingers move or zoom the drawing. In the wide layout the drawing takes
+   every gesture. */
 .canvas {
   cursor: grab;
-  touch-action: none;
+  touch-action: pan-x pan-y;
   outline: none;
+}
+
+@media (width >= 80rem) {
+  .canvas {
+    touch-action: none;
+  }
 }
 
 .canvas:active {
