@@ -60,9 +60,10 @@ names' layer and a few opacities:
 
 ## Consequences
 
-- With the CPU slowed four times, fly-ins run at 41 to 49 fps, wheel zoom at
-  46 to 54 and dragging at 60, with no frame over 67 ms; unslowed, everything
-  holds 60 fps. That is faster than before the drawings.
+- With the CPU slowed four times, fly-ins run at 45 to 51 fps, wheel zoom at
+  50 to 54 and dragging at 60, with no frame over 50 ms; unslowed, everything
+  holds 60 fps (Chromium, 1440 × 900, production build). That is faster than
+  before the drawings.
 - On a slow machine, a part's insides can appear a moment after the camera
   arrives.
 - New writing on the hardware needs its letters in the stroke font
