@@ -72,12 +72,20 @@ export function usePlayhead({
   useEffect(() => {
     const toProgress = (f: number) =>
       reduced || travel === 0 ? 1 : TRAVEL_EASE(Math.min(1, (f * total) / travel));
-    const offFraction = fraction.on("change", (f) => progress.set(toProgress(f)));
-    const offProgress = progress.on("change", (p) => {
+    const reachAt = (p: number) => {
       if (!nodeAt) return;
       const i = nodeIndexAt(nodeAt, p);
       setReach((r) => (r.key === stepKey && r.index === i ? r : { key: stepKey, index: i }));
+    };
+    // Every move of the clock places the signal, even when its progress does
+    // not change: a jump into the reading part of another step leaves progress
+    // at 1, but the signal is now at that step's last node.
+    const offFraction = fraction.on("change", (f) => {
+      const p = toProgress(f);
+      progress.set(p);
+      reachAt(p);
     });
+    const offProgress = progress.on("change", reachAt);
     progress.set(toProgress(fraction.get()));
     return () => {
       offFraction();
