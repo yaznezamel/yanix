@@ -13,7 +13,7 @@ export interface Box {
   h: number;
 }
 
-/** What a part is. Phase 2 picks a drawing per kind; until then all are boxes. */
+/** What a part is. */
 export type PartKind =
   | "machine"
   | "package"
@@ -26,6 +26,48 @@ export type PartKind =
   | "core"
   | "cache"
   | "unit";
+
+/**
+ * How a part is drawn (components/hardware/art). Parts without one are drawn
+ * by their kind: a block or a unit as logic, a cache as memory cells, and a
+ * part with parts of its own as those parts.
+ */
+export type Look =
+  /** A processor package: a metal lid, and the die under it. */
+  | "cpu"
+  /** A memory module: DRAM chips on a small board. */
+  | "dimm"
+  /** An M.2 card: a controller and flash chips. */
+  | "m2"
+  /** A small eight-pin flash chip. */
+  | "flash"
+  /** A network chip and its RJ45 jack. */
+  | "nic"
+  /** A chip under a heatsink. */
+  | "chipset"
+  /** An audio chip and its jacks. */
+  | "codec"
+  /** A graphics card with two fans. */
+  | "gpu"
+  /** A router, and the internet behind it. */
+  | "router"
+  /** A keyboard and a mouse. */
+  | "input"
+  | "speakers"
+  | "monitor"
+  /** Standard cells, as a photo of a die shows logic. */
+  | "logic"
+  /** Arrays of memory cells. */
+  | "sram"
+  /** A register file: small, many-ported memory. */
+  | "regfile"
+  /** An on-chip ring bus. */
+  | "ring"
+  /** Logic with a PHY along its bottom edge: the circuits that drive a bus off the chip. */
+  | "phy";
+
+/** A cable outside the case, drawn as a cable rather than as wires on a board. */
+export type Cable = "ethernet" | "usb" | "audio" | "display";
 
 /** A wire, bus or cable between two children of the same part. */
 export interface Link {
@@ -44,12 +86,28 @@ export interface Link {
   enters?: Record<string, string>;
   /** Which side of a vertical link its label goes on (right by default). */
   labelSide?: "left" | "right";
+  /** A cable outside the case; other links are wires on a board. */
+  cable?: Cable;
 }
 
 /** A labelled outline that groups children visually, such as the motherboard. */
 export interface Frame {
   label: string;
   box: Box;
+  /** A circuit board, or the space around the computer. */
+  kind: "board" | "outside";
+}
+
+/**
+ * Something on a board that is drawn but not part of the model, such as the
+ * power connector or the battery: it makes the board look like one, and
+ * cannot be clicked.
+ */
+export interface Decor {
+  kind: "socket" | "slot" | "vrm" | "io" | "power" | "battery" | "sata" | "hole" | "caps" | "silk";
+  box: Box;
+  /** For "silk": the text printed on the board. */
+  text?: string;
 }
 
 export interface Part {
@@ -61,6 +119,7 @@ export interface Part {
   /** Short second line under the label. */
   sub?: string;
   kind: PartKind;
+  look?: Look;
   /** Where the part sits in its parent's inner coordinates. */
   box: Box;
   /** Size of the part's own coordinate space, in which its children are placed. Same aspect ratio as `box`. */
@@ -68,6 +127,8 @@ export interface Part {
   children?: Part[];
   links?: Link[];
   frames?: Frame[];
+  /** Drawn on the part's own board, under its children. */
+  decor?: Decor[];
   /** What the part is and does, in a sentence or three (shown on hover and in the view's footer). */
   about: string;
   /** Lab map nodes this part stands for: it lights up when a trace reaches them. */

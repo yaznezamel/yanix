@@ -456,12 +456,12 @@ export function DesktopLab() {
                     Signal here
                   </span>
                   <span className="flex items-center gap-1.5">
-                    <span className="size-2.5 rounded-sm border border-signal/60 bg-[#ffb35c]/35" />
+                    <span className="size-2.5 rounded-sm border border-signal/60 bg-signal/10" />
                     Used in this step
                   </span>
                   <span className="flex items-center gap-1.5">
-                    <span className="size-2.5 rounded-sm border border-[#ffb35c]/40 bg-[#ffb35c]/10 opacity-60" />
-                    Not used
+                    <span className="size-2.5 rounded-sm border border-white/15 bg-white/20 opacity-45" />
+                    Not used (dimmed)
                   </span>
                 </span>
               )}

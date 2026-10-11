@@ -131,6 +131,33 @@ describe("hardware tree", () => {
     expect(levelOfDetail(TREE, { ...cam, k: cam.k * 3 }, view).signature).not.toBe(a.signature);
   });
 
+  it("takes the lid off the CPU only once you zoom in, and draws only what is near the view", () => {
+    const whole = levelOfDetail(TREE, fit(TREE.root.world, view), view);
+    expect(whole.open.has("cpu")).toBe(false);
+    expect(whole.drawn).toEqual(new Set(TREE.root.children.map((c) => c.id)));
+    const inCpu = levelOfDetail(TREE, fit(part("cpu").world, view), view);
+    expect(inCpu.full.has("cpu")).toBe(true);
+    const inCore = levelOfDetail(TREE, fit(part("cpu.core0").world, view), view);
+    expect(inCore.drawn.has("cpu.core0.l1d")).toBe(true);
+    // Far from core 0, the monitor is only an outline that keyboard focus can reach.
+    expect(inCore.drawn.has("monitor")).toBe(false);
+  });
+
+  it("gives each part a key that changes only when it, or a part inside it, is drawn differently", () => {
+    const at = (k: number) => levelOfDetail(TREE, { ...centre("cpu.core0"), k }, view);
+    const before = at(3.2);
+    const after = at(3.5);
+    expect(before.keys.get(TREE.root.id)).toBe(before.signature);
+    // Core 0 starts to show its units; the L3 cache next to it looks the same.
+    expect(after.open.has("cpu.core0")).toBe(true);
+    expect(before.open.has("cpu.core0")).toBe(false);
+    expect(after.keys.get("cpu.core0")).not.toBe(before.keys.get("cpu.core0"));
+    expect(after.keys.get("cpu")).not.toBe(before.keys.get("cpu"));
+    expect(after.keys.get("cpu.l3")).toBe(before.keys.get("cpu.l3"));
+    // A part's key includes the keys of the parts inside it.
+    for (const child of part("cpu").children) expect(after.keys.get("cpu")).toContain(after.keys.get(child.id));
+  });
+
   it("lets you zoom from a bit beyond the whole computer to well into the smallest part", () => {
     const limits = limitsFor(TREE, view);
     expect(limits.minK).toBeLessThan(fit(TREE.root.world, view).k);

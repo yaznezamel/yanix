@@ -6,10 +6,10 @@ import type { Part } from "./types";
 // big it ends up on screen.
 //
 // This is a generic teaching PC, not a model of a real board or chip: the
-// layouts are illustrative and no sizes or speeds are given (NFR9). Phase 1
-// draws every part as a plain box; later phases add the hardware drawings,
-// the data path below L2, and the insides of RAM, the SSD and the network
-// controller.
+// layouts are illustrative and no sizes or speeds are given (NFR9). Each part
+// says how it is drawn (`look`, see components/hardware/art); the decor on the
+// motherboard is drawn but not part of the model. Later phases add the data
+// path below L2, and the insides of RAM, the SSD and the network controller.
 
 const CORE_UNITS: Part[] = [
   {
@@ -44,6 +44,7 @@ const CORE_UNITS: Part[] = [
     label: "Registers",
     sub: "rax · rsp · …",
     kind: "unit",
+    look: "regfile",
     box: { x: 50, y: 520, w: 280, h: 240 },
     about:
       "The fastest storage, holding the values instructions work on right now. The registers a program names, such as rax and rsp, map onto a larger physical register file.",
@@ -117,8 +118,11 @@ const CPU: Part = {
   label: "CPU",
   sub: "processor",
   kind: "package",
+  look: "cpu",
   box: { x: 340, y: 90, w: 260, h: 260 },
   inner: { w: 1000, h: 1000 },
+  // Later than its cores' labels need: the lid stays on in the overview, and comes off as you zoom in.
+  openAt: 330,
   about:
     "Runs every instruction, of your programs and of the kernel. It reads and writes RAM through its own memory controller and talks to fast devices, such as the graphics card and the SSD, over PCIe (the fast serial links inside a PC); slower devices go through the chipset.",
   maps: ["cpu"],
@@ -133,6 +137,7 @@ const CPU: Part = {
       label: "Interconnect",
       sub: "on-chip network",
       kind: "block",
+      look: "ring",
       box: { x: 50, y: 390, w: 900, h: 60 },
       about:
         "Carries requests and data between the cores, the L3 cache, the memory controller and the I/O block. Real chips use a ring, a mesh or a crossbar.",
@@ -152,6 +157,7 @@ const CPU: Part = {
       short: "Memory",
       sub: "channels A · B",
       kind: "block",
+      look: "phy",
       box: { x: 50, y: 700, w: 430, h: 250 },
       about:
         "Turns memory requests into commands for the DRAM chips on the memory channels, one per RAM stick in this computer. Devices' DMA (direct memory access) to RAM goes through it too.",
@@ -162,6 +168,7 @@ const CPU: Part = {
       short: "I/O",
       sub: "root complex",
       kind: "block",
+      look: "phy",
       box: { x: 520, y: 700, w: 430, h: 250 },
       about:
         "Where PCIe starts (the root complex): it connects the CPU to PCIe devices, here the graphics card and the SSD, and to the chipset. Device DMA enters here on its way to the memory controller, and so do most device interrupts, which PCIe devices send as small memory writes (MSI, message signalled interrupts).",
@@ -174,8 +181,11 @@ const CHIPSET: Part = {
   label: "Chipset",
   sub: "USB · audio · power",
   kind: "chip",
+  look: "chipset",
   box: { x: 250, y: 560, w: 160, h: 160 },
   inner: { w: 1000, h: 1000 },
+  // As for the CPU: the heatsink stays on in the overview.
+  openAt: 240,
   about:
     "A hub for slower devices: USB, audio, power management, the firmware chip and extra PCIe lanes. One fast link connects it to the CPU.",
   children: [
@@ -185,6 +195,7 @@ const CHIPSET: Part = {
       short: "USB",
       sub: "xHCI",
       kind: "block",
+      look: "phy",
       box: { x: 60, y: 120, w: 420, h: 380 },
       about:
         "Polls USB devices such as the keyboard, moves their data to and from RAM with DMA, and raises an interrupt when a transfer completes. xHCI is the standard interface for USB host controllers.",
@@ -217,6 +228,7 @@ const CHIPSET: Part = {
       label: "PCIe and SPI",
       sub: "network · firmware",
       kind: "block",
+      look: "phy",
       box: { x: 520, y: 540, w: 420, h: 400 },
       about: "More PCIe lanes, for devices such as the Ethernet controller, and the SPI bus to the firmware chip.",
     },
@@ -233,8 +245,27 @@ export const MACHINE: Part = {
     "A desktop PC: the motherboard inside the case and the devices plugged into it. The layout is illustrative: real boards differ in where parts sit and which chip some devices connect to. Click a part to look inside.",
   openAt: 0,
   frames: [
-    { label: "Motherboard", box: { x: 20, y: 20, w: 960, h: 720 } },
-    { label: "Outside the case", box: { x: 20, y: 790, w: 960, h: 190 } },
+    { label: "Motherboard", box: { x: 20, y: 20, w: 960, h: 720 }, kind: "board" },
+    { label: "Outside the case", box: { x: 20, y: 790, w: 960, h: 190 }, kind: "outside" },
+  ],
+  decor: [
+    { kind: "socket", box: { x: 330, y: 80, w: 280, h: 280 } },
+    { kind: "slot", box: { x: 646, y: 58, w: 80, h: 334 } },
+    { kind: "slot", box: { x: 756, y: 58, w: 80, h: 334 } },
+    { kind: "vrm", box: { x: 346, y: 30, w: 248, h: 40 } },
+    { kind: "vrm", box: { x: 296, y: 252, w: 28, h: 96 } },
+    { kind: "caps", box: { x: 298, y: 30, w: 40, h: 40 } },
+    { kind: "io", box: { x: 28, y: 40, w: 34, h: 136 } },
+    { kind: "io", box: { x: 28, y: 270, w: 34, h: 180 } },
+    { kind: "power", box: { x: 898, y: 100, w: 42, h: 200 } },
+    { kind: "battery", box: { x: 886, y: 374, w: 52, h: 52 } },
+    { kind: "sata", box: { x: 868, y: 474, w: 80, h: 26 } },
+    { kind: "hole", box: { x: 948, y: 32, w: 20, h: 20 } },
+    { kind: "hole", box: { x: 608, y: 32, w: 20, h: 20 } },
+    { kind: "hole", box: { x: 948, y: 708, w: 20, h: 20 } },
+    { kind: "hole", box: { x: 602, y: 708, w: 20, h: 20 } },
+    { kind: "hole", box: { x: 32, y: 708, w: 20, h: 20 } },
+    { kind: "silk", box: { x: 410, y: 384, w: 160, h: 40 }, text: "YANIX B-1\nREV 1.0 · ILLUSTRATIVE" },
   ],
   children: [
     CPU,
@@ -244,6 +275,7 @@ export const MACHINE: Part = {
       short: "RAM 1",
       sub: "DIMM · channel A",
       kind: "module",
+      look: "dimm",
       box: { x: 650, y: 70, w: 72, h: 310 },
       about:
         "A memory module (DIMM): a small board of DRAM (dynamic RAM) chips. RAM holds the running programs, their data, the kernel's page tables and the page cache, and loses everything when the power goes off. Two sticks on two channels let the memory controller spread accesses across both.",
@@ -255,6 +287,7 @@ export const MACHINE: Part = {
       short: "RAM 2",
       sub: "DIMM · channel B",
       kind: "module",
+      look: "dimm",
       box: { x: 760, y: 70, w: 72, h: 310 },
       about:
         "The second memory module, on its own channel. Together with the first it makes up the computer's RAM.",
@@ -266,6 +299,7 @@ export const MACHINE: Part = {
       short: "SSD",
       sub: "M.2 · PCIe",
       kind: "card",
+      look: "m2",
       box: { x: 70, y: 190, w: 220, h: 60 },
       about:
         "Flash storage with its own controller, on a small M.2 card; NVMe is the protocol it speaks over PCIe. It reads commands from queues in RAM, moves the data with DMA (direct memory access: it writes RAM itself, without the CPU copying) and raises an interrupt when a command completes.",
@@ -277,6 +311,7 @@ export const MACHINE: Part = {
       short: "Firmware",
       sub: "UEFI · SPI flash",
       kind: "chip",
+      look: "flash",
       box: { x: 230, y: 450, w: 140, h: 64 },
       about:
         "A small flash chip holding the UEFI firmware (the successor to the BIOS), the first code the CPU runs at power-on. It hangs off a slow serial bus (SPI).",
@@ -288,6 +323,7 @@ export const MACHINE: Part = {
       short: "Ethernet",
       sub: "network chip",
       kind: "chip",
+      look: "nic",
       box: { x: 60, y: 570, w: 150, h: 130 },
       about:
         "Moves Ethernet frames between the cable and RAM with DMA, checks their checksums, and raises an interrupt when frames arrive. On many boards it is a chip near the back panel, connected to the chipset.",
@@ -300,6 +336,7 @@ export const MACHINE: Part = {
       short: "Audio",
       sub: "DAC · jacks",
       kind: "chip",
+      look: "codec",
       box: { x: 450, y: 570, w: 140, h: 130 },
       about:
         "Converts digital samples into the analog signal for the speakers (a digital-to-analog converter, DAC), and a microphone's signal back into samples. It gets its samples from the chipset's HD Audio controller.",
@@ -311,6 +348,7 @@ export const MACHINE: Part = {
       short: "GPU",
       sub: "PCIe x16 slot",
       kind: "card",
+      look: "gpu",
       box: { x: 630, y: 540, w: 320, h: 160 },
       about:
         "The GPU draws the desktop into a framebuffer, and its display controller sends that picture to the monitor at a fixed refresh rate. It sits in the long PCIe x16 slot, wired to the CPU.",
@@ -321,6 +359,7 @@ export const MACHINE: Part = {
       label: "Network",
       sub: "router · internet",
       kind: "network",
+      look: "router",
       box: { x: 40, y: 810, w: 190, h: 140 },
       about:
         "Everything outside the computer: your router, your internet provider and the servers you talk to. Packets leave through the Ethernet cable.",
@@ -332,6 +371,7 @@ export const MACHINE: Part = {
       short: "Keyboard, mouse",
       sub: "USB",
       kind: "peripheral",
+      look: "input",
       box: { x: 250, y: 830, w: 250, h: 100 },
       about:
         "Each has a small controller of its own that turns key presses, movements and clicks into reports. They cannot interrupt the computer: the USB host controller polls them for reports at a fixed interval.",
@@ -342,6 +382,7 @@ export const MACHINE: Part = {
       label: "Speakers",
       sub: "analog audio",
       kind: "peripheral",
+      look: "speakers",
       box: { x: 520, y: 830, w: 150, h: 100 },
       about:
         "Move with the voltage from the codec. Nothing is buffered here: if samples stop arriving in time, you hear a click or a gap.",
@@ -352,6 +393,7 @@ export const MACHINE: Part = {
       label: "Monitor",
       sub: "DisplayPort · HDMI",
       kind: "peripheral",
+      look: "monitor",
       box: { x: 690, y: 810, w: 270, h: 150 },
       about: "Shows the picture the graphics card sends over the cable, redrawn at a fixed refresh rate.",
       maps: ["display"],
@@ -422,6 +464,7 @@ export const MACHINE: Part = {
       label: "Ethernet cable",
       points: [[135, 700], [135, 810]],
       labelSide: "left",
+      cable: "ethernet",
     },
     {
       id: "usb",
@@ -430,8 +473,23 @@ export const MACHINE: Part = {
       label: "USB",
       points: [[330, 720], [330, 830]],
       enters: { chipset: "usb" },
+      cable: "usb",
     },
-    { id: "jack", from: "codec", to: "speakers", label: "audio jack", points: [[560, 700], [560, 830]] },
-    { id: "display", from: "gpu", to: "monitor", label: "DisplayPort", points: [[820, 700], [820, 810]] },
+    {
+      id: "jack",
+      from: "codec",
+      to: "speakers",
+      label: "audio jack",
+      points: [[560, 700], [560, 830]],
+      cable: "audio",
+    },
+    {
+      id: "display",
+      from: "gpu",
+      to: "monitor",
+      label: "DisplayPort",
+      points: [[820, 700], [820, 810]],
+      cable: "display",
+    },
   ],
 };

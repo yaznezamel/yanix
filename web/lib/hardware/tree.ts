@@ -219,12 +219,25 @@ function round(n: number): number {
 export interface Detail {
   /** Parts whose children are drawn. */
   open: Set<string>;
+  /** Parts whose children are fully shown: what covered them (a CPU's lid) is gone. */
+  full: Set<string>;
+  /**
+   * Parts on screen or close to it, drawn in full. The others among the
+   * children of an open part are drawn as bare outlines, which keyboard
+   * focus can still reach.
+   */
+  drawn: Set<string>;
   /** Parts you can click, tab to and hover: their parent is at least half faded in. */
   interactive: Set<string>;
   /** How each drawn part's name is shown. */
   labels: Map<string, LabelFit>;
   /** Links, as "parentId:linkId", whose labels fit. */
   linkLabels: Set<string>;
+  /**
+   * For each part, a signature of everything above for it and the parts
+   * inside it: a part whose key did not change need not be drawn again.
+   */
+  keys: Map<string, string>;
   /** Changes whenever anything above does, so a frame that changes nothing renders nothing. */
   signature: string;
 }
@@ -240,16 +253,20 @@ export function levelOfDetail(tree: Tree, cam: Camera, view: Size): Detail {
   const seen = visibleBox(cam, view);
   const margin = { x: seen.x - seen.w / 4, y: seen.y - seen.h / 4, w: seen.w * 1.5, h: seen.h * 1.5 };
   const open = new Set<string>();
+  const full = new Set<string>();
+  const drawn = new Set<string>();
   const interactive = new Set<string>();
   const labels = new Map<string, LabelFit>();
   const linkLabels = new Set<string>();
-  const signature: string[] = [];
+  const keys = new Map<string, string>();
 
-  function visit(p: Placed, reachable: boolean) {
+  /** Visits an open part's children; returns the signature of what is drawn inside it ("" when closed). */
+  function visit(p: Placed, reachable: boolean): string {
     const o = openness(p, cam.k);
-    if (o <= 0 || !intersects(p.world, margin)) return;
+    if (o <= 0 || !intersects(p.world, margin)) return "";
     open.add(p.id);
-    signature.push(`[${p.id}`);
+    if (o >= 1) full.add(p.id);
+    const signature = [o >= 1 ? "[=" : "["];
     for (const link of p.part.links ?? []) {
       if (!linkLabelFits(p, link, cam.k)) continue;
       linkLabels.add(`${p.id}:${link.id}`);
@@ -258,15 +275,20 @@ export function levelOfDetail(tree: Tree, cam: Camera, view: Size): Detail {
     const childrenReachable = reachable && o >= 0.5;
     for (const child of p.children) {
       if (childrenReachable) interactive.add(child.id);
+      const near = intersects(child.world, margin);
+      if (near) drawn.add(child.id);
       const fit = labelFit(child, cam.k);
       labels.set(child.id, fit);
-      signature.push(`${child.part.key}${childrenReachable ? "!" : ""}${fitKey(fit)}`);
-      visit(child, childrenReachable);
+      const key = `${child.part.key}${childrenReachable ? "!" : ""}${near ? "" : "~"}${fitKey(fit)}${visit(child, childrenReachable)}`;
+      keys.set(child.id, key);
+      signature.push(key);
     }
     signature.push("]");
+    return signature.join(" ");
   }
-  visit(tree.root, true);
-  return { open, interactive, labels, linkLabels, signature: signature.join(" ") };
+  const signature = visit(tree.root, true);
+  keys.set(tree.root.id, signature);
+  return { open, full, drawn, interactive, labels, linkLabels, keys, signature };
 }
 
 /** The share of the view a part covers, from 0 to 1. */

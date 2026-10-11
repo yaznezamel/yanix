@@ -37,6 +37,7 @@ import { NODES } from "@/lib/xray/nodes";
 import type { Step } from "@/lib/xray/types";
 import { LAYER_NAME } from "@/components/lab/palette";
 import styles from "./hardware.module.css";
+import { ArtDefs } from "./art";
 import { PartView } from "./Parts";
 
 // The hardware view: the computer as nested parts you can zoom into, from the
@@ -72,9 +73,12 @@ const ARROWS: Record<string, [number, number]> = {
 
 const INITIAL_DETAIL: Detail = {
   open: new Set([TREE.root.id]),
+  full: new Set([TREE.root.id]),
+  drawn: new Set(),
   interactive: new Set(TREE.root.children.map((c) => c.id)),
   labels: new Map(),
   linkLabels: new Set(),
+  keys: new Map(),
   signature: "",
 };
 
@@ -222,7 +226,8 @@ export function HardwareView({ step, reached, reduced }: HardwareViewProps) {
   const dive = useCallback(
     (p: Placed) => {
       const svg = svgRef.current;
-      const hadFocus = svg !== null && svg.contains(document.activeElement);
+      // A part had keyboard focus (not the view itself, as after a click).
+      const hadFocus = svg !== null && svg !== document.activeElement && svg.contains(document.activeElement);
       changeFocus(p.id);
       if (p.depth > 0) setRover(p.id);
       const size = sizeRef.current;
@@ -534,6 +539,7 @@ export function HardwareView({ step, reached, reduced }: HardwareViewProps) {
         onPointerUp={onPointerUp}
         onPointerCancel={onPointerUp}
       >
+        <ArtDefs />
         <g ref={worldRef} style={ready ? undefined : { visibility: "hidden" }}>
           <PartView
             node={TREE.root}

@@ -35,9 +35,26 @@
   outline: none;
 }
 
+/* An unlit part's outline is faint over its drawing; the pointer shows which part a click would open. */
+.part:hover .idle {
+  stroke: rgba(255, 255, 255, 0.55);
+}
+
 .part:focus-visible .box {
   stroke: #ffffff;
   stroke-width: 2.5px;
+}
+
+.spot {
+  pointer-events: none;
+}
+
+/* A dark outline under a name that sits on a drawing rather than on a tag. */
+.halo {
+  paint-order: stroke;
+  stroke: #070a0d;
+  stroke-width: 3px;
+  stroke-linejoin: round;
 }
 
 .label,

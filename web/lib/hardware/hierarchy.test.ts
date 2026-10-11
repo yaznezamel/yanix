@@ -77,6 +77,26 @@ describe("hardware hierarchy", () => {
     }
   });
 
+  it("puts the board's decor on the board, around a part only where it holds one", () => {
+    for (const p of withChildren) {
+      const board = p.part.frames?.find((f) => f.kind === "board");
+      for (const decor of p.part.decor ?? []) {
+        const name = `${p.id} ${decor.kind} at ${decor.box.x},${decor.box.y}`;
+        expect(board, name).toBeDefined();
+        expect(inside({ ...decor.box, x: decor.box.x - board!.box.x, y: decor.box.y - board!.box.y }, board!.box), name).toBe(true);
+        const under = p.part.children!.filter((c) => overlaps(c.box, decor.box));
+        // A socket or a slot holds exactly one part; nothing else sits under a part.
+        if (decor.kind === "socket" || decor.kind === "slot") {
+          expect(under, name).toHaveLength(1);
+          expect(inside({ ...under[0]!.box, x: under[0]!.box.x - decor.box.x, y: under[0]!.box.y - decor.box.y }, decor.box), name).toBe(true);
+        } else {
+          expect(under.map((c) => c.key), name).toEqual([]);
+        }
+        if (decor.kind === "silk") expect(decor.text, name).toBeTruthy();
+      }
+    }
+  });
+
   it("routes each link from one child's edge to the other's, around everything else", () => {
     for (const p of withChildren) {
       const links = p.part.links ?? [];
