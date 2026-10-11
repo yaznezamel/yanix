@@ -11,7 +11,8 @@ import type { Step } from "@/lib/xray/types";
 // read. The software map and the hardware view both draw from it, the timeline
 // shows it, and dragging the timeline sets it, so scrubbing moves every view
 // together, mid-step included. When a step's time is up, the clock asks the
-// reducer for the next step.
+// reducer for the next step. Stepping while paused still shows the signal
+// travel through the new step, then holds it there.
 
 const TRAVEL_EASE = cubicBezier(0.42, 0, 0.2, 1);
 
@@ -55,6 +56,9 @@ export function usePlayhead({
   // Bumped when a seek moves the clock within the same step, to restart it from there.
   const [restarts, setRestarts] = useState(0);
   const pending = useRef<{ index: number; fraction: number } | null>(null);
+  // True for a step entered with Next or Previous (not by dragging the
+  // timeline) until the clock has played it: if paused, the signal travels anyway.
+  const travelDue = useRef(false);
   const indexRef = useRef(index);
   const travel = step ? travelMs(step, 1) : 0;
   const total = step ? travel + readMs(step, 1) : 0;
@@ -83,9 +87,10 @@ export function usePlayhead({
 
   // A new step starts at its beginning, or where a seek asked for.
   useEffect(() => {
-    const wanted = pending.current;
+    const wanted = pending.current && pending.current.index === indexRef.current ? pending.current : null;
     pending.current = null;
-    fraction.jump(wanted && wanted.index === indexRef.current ? wanted.fraction : 0);
+    travelDue.current = wanted === null;
+    fraction.jump(wanted ? wanted.fraction : 0);
   }, [stepKey, fraction]);
 
   // Run the clock while playing; when the step's time is up, go to the next.
@@ -95,21 +100,36 @@ export function usePlayhead({
       fraction.jump(1);
       return;
     }
-    if (status !== "playing") return;
     const from = fraction.get();
+    if (status === "paused") {
+      // Paused on a step you stepped to: let the signal travel its path, then hold.
+      const end = total > 0 ? travel / total : 0;
+      if (!travelDue.current || from >= end) return;
+      if (reduced) {
+        fraction.jump(end);
+        return;
+      }
+      const controls = animate(fraction, end, {
+        duration: ((end - from) * total) / speed / 1000,
+        ease: "linear",
+      });
+      return () => controls.stop();
+    }
+    travelDue.current = false;
     const controls = animate(fraction, 1, {
       duration: ((1 - from) * total) / speed / 1000,
       ease: "linear",
       onComplete: () => dispatch({ type: "tick" }),
     });
     return () => controls.stop();
-  }, [step, stepKey, status, speed, total, restarts, fraction, dispatch]);
+  }, [step, stepKey, status, speed, travel, total, reduced, restarts, fraction, dispatch]);
 
   const seek = useCallback(
     (target: number, at: number) => {
       const clamped = Math.min(1, Math.max(0, at));
       dispatch({ type: "seek", index: target, partial: clamped < 1 });
       if (target === indexRef.current) {
+        travelDue.current = false;
         fraction.jump(clamped);
         setRestarts((n) => n + 1);
       } else {
