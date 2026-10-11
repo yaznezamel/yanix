@@ -34,8 +34,9 @@ as they finish.
   (ADR 0003; code references checked against Linux v7.2). Its study tasks
   (L.1 to L.6) are in the roadmap.
 - In progress, ahead of the roadmap: a zoomable hardware view in the lab
-  (ADR 0004), in five phases (H.1 to H.5 in the roadmap), each built by the
-  assistant at my request and reviewed by me before the next. H.1 is built.
+  (ADR 0004, ADR 0005), in five phases (H.1 to H.5 in the roadmap), each
+  built by the assistant at my request and reviewed by me before the next.
+  H.1 and H.2 are built; H.3 (core and data path) is next.
 - Still to do by hand: branch protection on `main` (CI green + one review).
 - Next: phase 1, task 1.1, Pydantic models for the component YAML. From
   phase 1 on, I write the code and the assistant teaches and reviews.

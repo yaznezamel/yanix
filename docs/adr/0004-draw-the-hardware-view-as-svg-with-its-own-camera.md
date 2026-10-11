@@ -1,6 +1,7 @@
 # 0004. Draw the hardware view as SVG with its own camera
 
-- Status: accepted
+- Status: accepted; how names keep their size changed in
+  [0005](0005-draw-the-hardware-in-code-and-keep-zooming-cheap.md)
 - Date: 2026-10-10
 
 ## Context

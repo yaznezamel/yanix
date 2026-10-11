@@ -86,8 +86,10 @@ phases, each one reviewed before the next:
 - [x] **H.1 Model and camera.** The hierarchy as data (`web/lib/hardware/`),
   zoom, pan, click to fly in, keyboard, level of detail, breadcrumb, one
   playhead shared by every view, and a timeline you can drag. Plain boxes.
-- [ ] **H.2 Machine and CPU drawings.** The motherboard and CPU package drawn
-  as hardware, with hover cards.
+- [x] **H.2 Machine and CPU drawings.** The motherboard and CPU package drawn
+  as hardware, with hover cards. Also: "Show in Hardware" from a box's
+  details, and the frame-rate work in
+  [ADR 0005](adr/0005-draw-the-hardware-in-code-and-keep-zooming-cheap.md).
 - [ ] **H.3 Core and data path.** The core's units and the data path below
   them, with each step's events animated at every level.
 - [ ] **H.4 RAM, SSD and network controller.** DIMM chips and banks, the

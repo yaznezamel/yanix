@@ -31,9 +31,13 @@ overview and a deep dive. Caches stay warm between runs, so a second read,
 launch or search does less work.
 
 Next to the software path, the **Hardware** tab shows the same trace on the
-machine itself: zoom from the motherboard into the CPU and one of its cores,
-and watch the parts and wires each step uses light up. It is a generic,
-illustrative PC ([ADR 0004](docs/adr/0004-draw-the-hardware-view-as-svg-with-its-own-camera.md)).
+machine itself: zoom from the motherboard into the CPU (its lid comes off as
+you go) and one of its cores, and watch the parts and wires each step uses
+light up. Rest the pointer on a part to learn what it does, or open a box of
+the software path and choose **Show in Hardware** to see where it runs. It is
+a generic, illustrative PC
+([ADR 0004](docs/adr/0004-draw-the-hardware-view-as-svg-with-its-own-camera.md),
+[ADR 0005](docs/adr/0005-draw-the-hardware-in-code-and-keep-zooming-cheap.md)).
 
 It is a teaching model with scripted steps, not a live trace (see
 [ADR 0002](docs/adr/0002-build-a-desktop-lab-ahead-of-the-roadmap.md) and
