@@ -495,7 +495,7 @@ export function HardwareView({ step, reached, reduced }: HardwareViewProps) {
 
       <div
         ref={navRef}
-        className="pointer-events-none absolute inset-x-3 top-10 flex flex-wrap items-center justify-between gap-x-3 gap-y-1"
+        className="pointer-events-none absolute inset-x-3 top-1 flex flex-wrap items-center justify-between gap-x-3 gap-y-1"
       >
         <nav aria-label="Where you are" className="flex flex-wrap items-center gap-1 text-[12px]">
           {trail.map((p, i) => {
