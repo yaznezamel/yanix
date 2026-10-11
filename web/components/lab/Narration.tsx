@@ -1,6 +1,7 @@
 "use client";
 
 import { AnimatePresence, motion } from "motion/react";
+import { useCallback, useRef, useState } from "react";
 import { NODES } from "@/lib/xray/nodes";
 import type { CodeRef, NodeId, Step } from "@/lib/xray/types";
 import { LAYER_HEX, LAYER_NAME, PHASE_NAME, TIMESCALE } from "./palette";
@@ -94,6 +95,39 @@ export function Narration({
     );
   }
 
+  return (
+    <StepStory step={step} next={next} position={position} scenarioTitle={scenarioTitle} />
+  );
+}
+
+/** One step of the story. Long steps scroll, with a cue that there is more to read. */
+function StepStory({
+  step,
+  next,
+  position,
+  scenarioTitle,
+}: {
+  step: Step;
+  next: Step | null;
+  position: { index: number; total: number };
+  scenarioTitle: string | null;
+}) {
+  const scroller = useRef<HTMLDivElement | null>(null);
+  const [more, setMore] = useState(false);
+  // Watch the scrolling text (a new element for every step): is anything below the fold?
+  const watch = useCallback((el: HTMLDivElement | null) => {
+    scroller.current = el;
+    if (!el) return;
+    const update = () => setMore(el.scrollHeight - el.scrollTop - el.clientHeight > 6);
+    update();
+    const observer = new ResizeObserver(update);
+    observer.observe(el);
+    el.addEventListener("scroll", update, { passive: true });
+    return () => {
+      observer.disconnect();
+      el.removeEventListener("scroll", update);
+    };
+  }, []);
   const layers = Array.from(new Set(step.path.map((id) => NODES[id].layer)));
 
   return (
@@ -109,9 +143,11 @@ export function Narration({
           · {scenarioTitle}
         </span>
       </div>
+      <div className="relative flex min-h-0 flex-col">
       <AnimatePresence mode="wait" initial={false}>
         <motion.div
           key={step.id}
+          ref={watch}
           initial={{ opacity: 0, y: 8 }}
           animate={{ opacity: 1, y: 0 }}
           exit={{ opacity: 0, y: -6 }}
@@ -173,6 +209,25 @@ export function Narration({
           )}
         </motion.div>
       </AnimatePresence>
+      {more && (
+        <>
+          <div
+            aria-hidden
+            className="pointer-events-none absolute inset-x-0 bottom-0 h-12 bg-gradient-to-t from-lab-panel to-transparent"
+          />
+          <button
+            type="button"
+            onClick={() => {
+              const el = scroller.current;
+              if (el) el.scrollBy({ top: el.clientHeight * 0.75, behavior: "smooth" });
+            }}
+            className="absolute right-0 bottom-0 rounded-full border border-lab-line bg-lab-panel2 px-2.5 py-1 text-[11.5px] text-lab-ink shadow-md hover:border-white/30"
+          >
+            More ↓
+          </button>
+        </>
+      )}
+      </div>
       {next && (
         <p className="mt-auto shrink-0 truncate text-[12px] text-lab-muted">
           Next: <span className="text-lab-ink/70">{next.title}</span>

@@ -60,12 +60,12 @@ export function PacketPanel({ packet, previous }: PacketPanelProps) {
 
   if (!packet) {
     return (
-      <section aria-label="Data" className="flex h-full flex-col gap-2 p-4">
+      <section aria-label="Data" className="flex h-full flex-col gap-1.5 px-4 py-3">
         <h2 className="font-mono text-[11px] uppercase tracking-[0.14em] text-lab-muted">Data</h2>
-        <p className="text-[13px] leading-relaxed text-lab-muted">
-          Nothing in flight in this step. When data moves between layers, what it travels in shows
-          up here: packet headers as each layer adds or removes them, USB reports, input events,
-          Wayland messages, NVMe commands, memory maps.
+        <p className="text-[13px] leading-snug text-lab-ink/80">Nothing in flight in this step.</p>
+        <p className="text-[12px] leading-snug text-lab-muted">
+          When data moves between layers, it shows up here: packets, USB reports, input events, disk
+          commands.
         </p>
       </section>
     );

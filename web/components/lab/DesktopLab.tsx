@@ -346,7 +346,9 @@ export function DesktopLab() {
             <div
               className={`grid min-h-0 flex-1 gap-3 ${
                 layout === "machine"
-                  ? "xl:grid-cols-1 xl:grid-rows-[minmax(170px,1.3fr)_minmax(170px,1fr)]"
+                  ? packet
+                    ? "xl:grid-cols-1 xl:grid-rows-[minmax(170px,1.3fr)_minmax(170px,1fr)]"
+                    : "xl:grid-cols-1 xl:grid-rows-[minmax(170px,1fr)_auto]"
                   : "md:grid-cols-2"
               }`}
             >
