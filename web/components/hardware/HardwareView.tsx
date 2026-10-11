@@ -63,6 +63,13 @@ const CLICK_SLOP = 5;
 /** Below this width the lab scrolls as a page, so the view leaves plain scrolling and one-finger swipes to it. */
 const IMMERSIVE = "(min-width: 80rem)";
 
+const ARROWS: Record<string, [number, number]> = {
+  ArrowRight: [1, 0],
+  ArrowLeft: [-1, 0],
+  ArrowDown: [0, 1],
+  ArrowUp: [0, -1],
+};
+
 const INITIAL_DETAIL: Detail = {
   open: new Set([TREE.root.id]),
   interactive: new Set(TREE.root.children.map((c) => c.id)),
@@ -115,7 +122,14 @@ export function HardwareView({ step, reached, reduced }: HardwareViewProps) {
   const [focus, setFocus] = useState(TREE.root.id);
   const [ready, setReady] = useState(false);
   const [nudge, setNudge] = useState<string | null>(null);
+  // The part that holds the view's one place in the tab order.
+  const [rover, setRover] = useState(TREE.root.children[0]!.id);
+  const detailRef = useRef(detail);
   const hintId = useId();
+
+  useEffect(() => {
+    detailRef.current = detail;
+  }, [detail]);
 
   useEffect(() => {
     reducedRef.current = reduced;
@@ -210,6 +224,7 @@ export function HardwareView({ step, reached, reduced }: HardwareViewProps) {
       const svg = svgRef.current;
       const hadFocus = svg !== null && svg.contains(document.activeElement);
       changeFocus(p.id);
+      if (p.depth > 0) setRover(p.id);
       const size = sizeRef.current;
       const free = insets();
       // Close enough that the part's insides are fully shown, even if its edges go a little off screen.
@@ -234,6 +249,32 @@ export function HardwareView({ step, reached, reduced }: HardwareViewProps) {
     return true;
   }, [dive]);
 
+  /** Arrow keys on a part move to the nearest part in that direction. */
+  const arrow = useCallback((from: Placed, key: string): boolean => {
+    const dir = ARROWS[key];
+    if (!dir) return false;
+    const a = { x: from.world.x + from.world.w / 2, y: from.world.y + from.world.h / 2 };
+    let best: Placed | null = null;
+    let bestScore = Number.POSITIVE_INFINITY;
+    for (const id of detailRef.current.interactive) {
+      const p = TREE.byId.get(id);
+      if (!p || p === from) continue;
+      const dx = p.world.x + p.world.w / 2 - a.x;
+      const dy = p.world.y + p.world.h / 2 - a.y;
+      const along = dx * dir[0] + dy * dir[1];
+      if (along <= 0.001) continue;
+      const score = along + Math.abs(dx * dir[1] - dy * dir[0]) * 2;
+      if (score < bestScore) {
+        bestScore = score;
+        best = p;
+      }
+    }
+    if (!best) return false;
+    setRover(best.id);
+    svgRef.current?.querySelector<SVGGElement>(`[data-part="${best.id}"]`)?.focus();
+    return true;
+  }, []);
+
   const zoomBy = useCallback(
     (factor: number) => {
       const cam = camRef.current;
@@ -248,6 +289,7 @@ export function HardwareView({ step, reached, reduced }: HardwareViewProps) {
   /** Tabbing to a part that is off screen brings it into view. */
   const reveal = useCallback(
     (p: Placed) => {
+      setRover(p.id);
       const cam = camRef.current;
       if (!cam || quietFocus.current) return;
       const size = sizeRef.current;
@@ -331,9 +373,12 @@ export function HardwareView({ step, reached, reduced }: HardwareViewProps) {
       }
       e.preventDefault();
       stopFlight();
-      // Same scaling as d3-zoom: a mouse wheel notch is about 1.15x, a trackpad pinch (ctrlKey) is finer.
+      // As in d3-zoom, a mouse wheel notch zooms about 1.15x. A trackpad pinch
+      // arrives as small wheel steps with ctrlKey set, so those count ten
+      // times as much; a mouse wheel turned with Ctrl held does not.
       const unit = e.deltaMode === 1 ? 0.05 : e.deltaMode ? 1 : 0.002;
-      const factor = 2 ** (-e.deltaY * unit * (e.ctrlKey ? 10 : 1));
+      const pinch = e.ctrlKey && e.deltaMode === 0 && Math.abs(e.deltaY) < 50;
+      const factor = Math.min(1.35, Math.max(1 / 1.35, 2 ** (-e.deltaY * unit * (pinch ? 10 : 1))));
       // Measure where the view is once per burst of wheel events, not on every event.
       const rect = viewRect(e.timeStamp - lastWheel.current > 250);
       lastWheel.current = e.timeStamp;
@@ -420,7 +465,8 @@ export function HardwareView({ step, reached, reduced }: HardwareViewProps) {
   }
 
   function onKeyDown(e: React.KeyboardEvent) {
-    if (e.altKey || e.ctrlKey || e.metaKey) return;
+    // A part already used the key (arrows move between parts there).
+    if (e.defaultPrevented || e.altKey || e.ctrlKey || e.metaKey) return;
     const cam = camRef.current;
     const limits = limitsRef.current;
     if (!cam || !limits) return;
@@ -460,6 +506,13 @@ export function HardwareView({ step, reached, reduced }: HardwareViewProps) {
   }
 
   const activity = useMemo(() => activityAt(TREE, step, reached), [step, reached]);
+  // The part in the tab order: the last one you were on, or the nearest part
+  // around it that can still be reached at this zoom.
+  const tabStop = useMemo(() => {
+    let p = TREE.byId.get(rover);
+    while (p && !detail.interactive.has(p.id)) p = p.parent ?? undefined;
+    return p && p.depth > 0 ? p.id : TREE.root.children[0]!.id;
+  }, [rover, detail]);
   const focused = TREE.byId.get(focus) ?? TREE.root;
   const trail = lineage(focused);
   const busy = step ? busiest(activity) : [];
@@ -487,8 +540,10 @@ export function HardwareView({ step, reached, reduced }: HardwareViewProps) {
             detail={detail}
             activity={activity}
             active={step !== null}
+            tabStop={tabStop}
             onDive={dive}
             onReveal={reveal}
+            onArrow={arrow}
           />
         </g>
       </svg>
@@ -497,7 +552,10 @@ export function HardwareView({ step, reached, reduced }: HardwareViewProps) {
         ref={navRef}
         className="pointer-events-none absolute inset-x-3 top-1 flex flex-wrap items-center justify-between gap-x-3 gap-y-1"
       >
-        <nav aria-label="Where you are" className="flex flex-wrap items-center gap-1 text-[12px]">
+        <nav
+          aria-label="Where you are"
+          className="flex flex-wrap items-center gap-1 rounded-md bg-lab-panel/85 px-1 text-[12px] backdrop-blur-sm"
+        >
           {trail.map((p, i) => {
             const last = i === trail.length - 1;
             return (

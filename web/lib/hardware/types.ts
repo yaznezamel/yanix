@@ -42,6 +42,8 @@ export interface Link {
    * end's key: { cpu: "io" } means it reaches the CPU's I/O block.
    */
   enters?: Record<string, string>;
+  /** Which side of a vertical link its label goes on (right by default). */
+  labelSide?: "left" | "right";
 }
 
 /** A labelled outline that groups children visually, such as the motherboard. */

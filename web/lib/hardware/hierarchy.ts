@@ -133,7 +133,7 @@ const CPU: Part = {
       label: "Interconnect",
       sub: "on-chip network",
       kind: "block",
-      box: { x: 50, y: 395, w: 900, h: 40 },
+      box: { x: 50, y: 390, w: 900, h: 60 },
       about:
         "Carries requests and data between the cores, the L3 cache, the memory controller and the I/O block. Real chips use a ring, a mesh or a crossbar.",
     },
@@ -142,7 +142,7 @@ const CPU: Part = {
       label: "L3 cache",
       sub: "shared by all cores",
       kind: "cache",
-      box: { x: 50, y: 455, w: 900, h: 220 },
+      box: { x: 50, y: 465, w: 900, h: 215 },
       about:
         "A large cache shared by all cores. Data that one core loaded can be found here by another, without a trip to RAM.",
     },
@@ -415,7 +415,14 @@ export const MACHINE: Part = {
       points: [[410, 635], [450, 635]],
       enters: { chipset: "audio" },
     },
-    { id: "ethernet", from: "nic", to: "network", label: "Ethernet cable", points: [[135, 700], [135, 810]] },
+    {
+      id: "ethernet",
+      from: "nic",
+      to: "network",
+      label: "Ethernet cable",
+      points: [[135, 700], [135, 810]],
+      labelSide: "left",
+    },
     {
       id: "usb",
       from: "chipset",

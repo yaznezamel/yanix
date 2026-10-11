@@ -30,23 +30,29 @@ export const PartView = memo(function PartView({
   detail,
   activity,
   active,
+  tabStop,
   onDive,
   onReveal,
+  onArrow,
 }: {
   node: Placed;
   detail: Detail;
   activity: Activity;
   active: boolean;
+  /** The one part in the tab order; arrow keys move between parts. */
+  tabStop: string;
   onDive: (p: Placed) => void;
   onReveal: (p: Placed) => void;
+  onArrow: (p: Placed, key: string) => boolean;
 }) {
   const open = detail.open.has(node.id);
   let state: PartState = "idle";
   if (active && node.depth > 0) {
     if (activity.current.has(node.id)) state = "current";
     else if (activity.touched.has(node.id)) state = "touched";
-    // Only top-level parts dim; what is inside them follows their opacity.
-    else if (node.depth === 1) state = "dim";
+    // An unused part dims if its parent is in use (or it is a top-level part);
+    // inside a part that is already dimmed, it simply follows its opacity.
+    else if (node.depth === 1 || (node.parent !== null && activity.touched.has(node.parent.id))) state = "dim";
   }
   const reachable = node.depth === 0 || detail.interactive.has(node.id);
   const childrenReachable = node.children.some((c) => detail.interactive.has(c.id));
@@ -60,8 +66,10 @@ export const PartView = memo(function PartView({
           open={open}
           fit={detail.labels.get(node.id)}
           reachable={reachable}
+          tabbable={reachable && node.id === tabStop}
           onDive={onDive}
           onReveal={onReveal}
+          onArrow={onArrow}
         />
       )}
       {open && (
@@ -91,8 +99,10 @@ export const PartView = memo(function PartView({
               detail={detail}
               activity={activity}
               active={active}
+              tabStop={tabStop}
               onDive={onDive}
               onReveal={onReveal}
+              onArrow={onArrow}
             />
           ))}
         </g>
@@ -107,16 +117,20 @@ function PartBox({
   open,
   fit,
   reachable,
+  tabbable,
   onDive,
   onReveal,
+  onArrow,
 }: {
   node: Placed;
   state: PartState;
   open: boolean;
   fit: LabelFit | undefined;
   reachable: boolean;
+  tabbable: boolean;
   onDive: (p: Placed) => void;
   onReveal: (p: Placed) => void;
+  onArrow: (p: Placed, key: string) => boolean;
 }) {
   const { world: w, part } = node;
   const hex = part.kind === "network" ? LAYER_HEX.network : LAYER_HEX.hardware;
@@ -126,7 +140,7 @@ function PartBox({
   return (
     <g
       role="button"
-      tabIndex={reachable ? 0 : -1}
+      tabIndex={tabbable ? 0 : -1}
       aria-hidden={reachable ? undefined : true}
       aria-label={`${part.label}. ${part.about}`}
       data-part={node.id}
@@ -135,6 +149,8 @@ function PartBox({
         if (e.key === "Enter" || e.key === " ") {
           e.preventDefault();
           onDive(node);
+        } else if (e.key.startsWith("Arrow") && onArrow(node, e.key)) {
+          e.preventDefault();
         }
       }}
       onFocus={(e) => {
@@ -232,9 +248,9 @@ function LinkView({
       {labelled && (
         <g className={styles.label} style={screenSized(label.x, label.y)}>
           <text
-            x={label.vertical ? 6 : 0}
+            x={label.vertical ? (label.left ? -6 : 6) : 0}
             y={label.vertical ? 4 : 13}
-            textAnchor={label.vertical ? "start" : "middle"}
+            textAnchor={label.vertical ? (label.left ? "end" : "start") : "middle"}
             fontSize={10}
             fill={lit ? SIGNAL : "rgba(255,255,255,0.62)"}
             className="font-mono"

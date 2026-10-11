@@ -76,7 +76,7 @@ export function labelFit(p: Placed, k: number): LabelFit {
 /** A link in world coordinates, and where its label goes: by the middle of its longest straight run. */
 export interface LinkShape {
   points: Point[];
-  label: { x: number; y: number; length: number; vertical: boolean };
+  label: { x: number; y: number; length: number; vertical: boolean; left: boolean };
 }
 
 const shapes = new Map<string, LinkShape>();
@@ -89,12 +89,15 @@ export function linkShape(parent: Placed, link: Link): LinkShape {
     x: parent.world.x + x * parent.unit,
     y: parent.world.y + y * parent.unit,
   }));
-  let label = { x: 0, y: 0, length: 0, vertical: false };
+  const left = link.labelSide === "left";
+  let label = { x: 0, y: 0, length: 0, vertical: false, left };
   for (let i = 1; i < points.length; i++) {
     const a = points[i - 1]!;
     const b = points[i]!;
     const length = Math.hypot(b.x - a.x, b.y - a.y);
-    if (length > label.length) label = { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2, length, vertical: a.x === b.x };
+    if (length > label.length) {
+      label = { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2, length, vertical: a.x === b.x, left };
+    }
   }
   const shape = { points, label };
   shapes.set(key, shape);
