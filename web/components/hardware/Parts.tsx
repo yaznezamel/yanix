@@ -1,5 +1,6 @@
 "use client";
 
+import { memo } from "react";
 import { LAYER_HEX, SIGNAL, alpha } from "@/components/lab/palette";
 import type { Activity } from "@/lib/hardware/activity";
 import { isVertical, linkShape, opennessCss, type Detail, type LabelFit, type Placed } from "@/lib/hardware/tree";
@@ -22,7 +23,9 @@ function screenSized(x: number, y: number, extra = ""): React.CSSProperties {
   return { transform: `translate(${x}px, ${y}px) scale(calc(1 / var(--zoom)))${extra}` };
 }
 
-export function PartView({
+// Memoised: a change of focus or of the description below the drawing does
+// not redraw the parts, only a change of what is shown or lit does.
+export const PartView = memo(function PartView({
   node,
   detail,
   activity,
@@ -96,7 +99,7 @@ export function PartView({
       )}
     </g>
   );
-}
+});
 
 function PartBox({
   node,
