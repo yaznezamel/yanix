@@ -82,7 +82,7 @@ export const CLOSED_WINDOWS: Record<WindowId, WindowStatus> = {
 
 const TERMINAL_BANNER = [
   { kind: "banner" as const, text: "Yanix terminal · commands are simulated, the kernel path is real" },
-  { kind: "hint" as const, text: "Try: cat notes.txt   ·   help" },
+  { kind: "hint" as const, text: "Try: cat notes.txt   ·   ./marks   ·   help" },
 ];
 
 /** Each app as it looks when it starts, without the window bookkeeping. */
@@ -101,6 +101,7 @@ export const FRESH_APPS: Omit<AppState, "screen" | "bootLog" | "windows" | "clip
   terminal: { lines: TERMINAL_BANNER, busy: false },
   editor: { file: null, text: "", loading: false },
   player: { media: "audio", playing: false, status: null },
+  program: null,
 };
 
 export const INITIAL_APPS: AppState = {

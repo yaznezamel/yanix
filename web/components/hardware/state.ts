@@ -9,8 +9,9 @@ export function partState(node: Placed, activity: Activity, active: boolean): Pa
   if (!active || node.depth === 0) return "idle";
   if (activity.current.has(node.id)) return "current";
   if (activity.touched.has(node.id)) return "touched";
-  // The units of a core that runs this step's code are not modelled yet
-  // (H.3): they are neither used nor unused, so they stay as they are.
+  // The units of a core that runs this step's code are not unused: every
+  // instruction goes through some of them. They stay as they are, unless the
+  // step names them as the ones its work is about (touched, above).
   if (node.parent?.part.runs && activity.touched.has(node.parent.id)) return "idle";
   // An unused part dims if its parent is in use (or it is a top-level part);
   // inside a part that is already dimmed, it simply follows that part.

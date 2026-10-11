@@ -50,6 +50,8 @@ export const HEADER_COLOR: Record<HeaderKind, string> = {
   vma: "#8fa3ff",
   pcm: "#5eead4",
   reg: "#ffb35c",
+  syscall: "#a5b4fc",
+  heap: "#f0abfc",
 };
 
 export const HEADER_TAG: Record<HeaderKind, string> = {
@@ -73,6 +75,8 @@ export const HEADER_TAG: Record<HeaderKind, string> = {
   vma: "MAP",
   pcm: "PCM",
   reg: "REG",
+  syscall: "SYS",
+  heap: "HEAP",
 };
 
 export const PHASE_NAME: Record<Phase, string> = {

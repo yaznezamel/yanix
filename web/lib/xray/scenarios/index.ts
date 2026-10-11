@@ -5,6 +5,7 @@ import { copy, paste } from "./clipboard";
 import { openFile, readFile } from "./files";
 import { keystroke } from "./keyboard";
 import { launch } from "./launch";
+import { programInput, runProgram } from "./marks";
 import { play } from "./media";
 import { boot, login, restart, shutdown } from "./power";
 import { webSearch } from "./web";
@@ -15,7 +16,8 @@ import { webSearch } from "./web";
 
 export { APP_NODE } from "./launch";
 
-export function buildScenario(request: ScenarioRequest, machine: MachineState): Scenario {
+/** `apps` is what is on screen when the request is made: the program's next trace starts from its state. */
+export function buildScenario(request: ScenarioRequest, machine: MachineState, apps: AppState): Scenario {
   switch (request.kind) {
     case "launch":
       return launch(request.app, machine);
@@ -41,6 +43,10 @@ export function buildScenario(request: ScenarioRequest, machine: MachineState): 
       return shutdown();
     case "restart":
       return restart();
+    case "runProgram":
+      return runProgram(apps);
+    case "programInput":
+      return programInput(apps, request.text);
   }
 }
 
@@ -80,6 +86,20 @@ export function applyTrigger(request: ScenarioRequest, apps: AppState): AppState
       };
     case "openFile":
       return { ...apps, editor: { file: NOTES_FILE, text: "", loading: true } };
+    case "runProgram":
+      return {
+        ...apps,
+        terminal: { lines: [...apps.terminal.lines, { kind: "prompt", text: "./marks" }], busy: true },
+      };
+    case "programInput": {
+      // The TTY echoes what you type as you type it: it is on screen before the program reads it.
+      const lines = [...apps.terminal.lines];
+      const last = lines.length - 1;
+      const ask = lines[last];
+      if (ask?.kind === "ask" && ask.answer === undefined) lines[last] = { ...ask, answer: request.text };
+      else lines.push({ kind: "output", text: request.text });
+      return { ...apps, terminal: { lines, busy: true } };
+    }
     case "launch":
       return { ...apps, windows: { ...apps.windows, [request.app]: "starting" } };
     case "play":

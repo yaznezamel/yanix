@@ -149,6 +149,12 @@ export function activityAt(tree: Tree, step: Step | null, reached: number): Acti
       }
     }
   }
+  // Parts the step names, such as the units of the core that runs its code:
+  // used in the step, while the signal stays at the core.
+  for (const id of step.parts ?? []) {
+    const p = tree.byId.get(id);
+    if (p) withAncestors(touched, p);
+  }
   return { current, touched, links };
 }
 

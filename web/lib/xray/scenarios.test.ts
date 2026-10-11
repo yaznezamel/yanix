@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { APPS, COLD_MACHINE, MEDIA, NOTES_FILE } from "./apps";
+import { APPS, COLD_MACHINE, INITIAL_APPS, MEDIA, NOTES_FILE } from "./apps";
 import { visibleSteps } from "./engine";
 import { buildPath, nodeIndexAt } from "./geometry";
 import { BANDS, NODES, NODE_IDS, VIEW } from "./nodes";
@@ -43,7 +43,7 @@ const label = (r: ScenarioRequest) =>
 const variants = requests.flatMap((request) =>
   [COLD_MACHINE, WARM, { ...WARM, connectionOpen: true }].map((machine, i) => ({
     name: `${label(request)} (${["cold", "warm", "warm, connected"][i]})`,
-    scenario: buildScenario(request, machine),
+    scenario: buildScenario(request, machine, INITIAL_APPS),
   })),
 );
 
@@ -88,8 +88,8 @@ describe.each(variants)("$name", ({ scenario }) => {
 });
 
 describe("web search", () => {
-  const cold = buildScenario({ kind: "search", query: "q" }, COLD_MACHINE);
-  const warm = buildScenario({ kind: "search", query: "q" }, WARM);
+  const cold = buildScenario({ kind: "search", query: "q" }, COLD_MACHINE, INITIAL_APPS);
+  const warm = buildScenario({ kind: "search", query: "q" }, WARM, INITIAL_APPS);
 
   it("asks ARP and walks the DNS tree only when the caches are cold", () => {
     expect(ids(cold)).toContain("arp-request");
@@ -124,8 +124,8 @@ describe("reading a file", () => {
   it.each([{ kind: "readFile" } as const, { kind: "openFile" } as const])(
     "$kind only reaches the SSD on a page cache miss",
     (request) => {
-      const cold = buildScenario(request, COLD_MACHINE);
-      const warm = buildScenario(request, WARM);
+      const cold = buildScenario(request, COLD_MACHINE, INITIAL_APPS);
+      const warm = buildScenario(request, WARM, INITIAL_APPS);
       expect(touchesSsd(cold)).toBe(true);
       expect(touchesSsd(warm)).toBe(false);
       expect(step(cold, "cache-miss").cache).toBe("miss");
@@ -135,7 +135,7 @@ describe("reading a file", () => {
   );
 
   it("sends a 64-byte NVMe read command, opcode 0x02", () => {
-    const cold = buildScenario({ kind: "openFile" }, COLD_MACHINE);
+    const cold = buildScenario({ kind: "openFile" }, COLD_MACHINE, INITIAL_APPS);
     const command = packetAt(step(cold, "nvme-cmd").frames, 1)!.headers[0]!;
     expect(command.bytes).toBe(64);
     expect(command.fields[0]?.value).toContain("0x02");
@@ -145,8 +145,8 @@ describe("reading a file", () => {
 
 describe("launching an app", () => {
   it("waits for the SSD only the first time, then hits the page cache", () => {
-    const cold = buildScenario({ kind: "launch", app: "editor" }, COLD_MACHINE);
-    const warm = buildScenario({ kind: "launch", app: "editor" }, WARM);
+    const cold = buildScenario({ kind: "launch", app: "editor" }, COLD_MACHINE, INITIAL_APPS);
+    const warm = buildScenario({ kind: "launch", app: "editor" }, WARM, INITIAL_APPS);
     expect(step(cold, "page-faults").path).toContain("ssd");
     expect(step(cold, "page-faults").cache).toBe("miss");
     expect(step(warm, "page-faults").path).not.toContain("ssd");
@@ -155,7 +155,7 @@ describe("launching an app", () => {
   });
 
   it("walks clone, copy-on-write, execve, the ELF loader, ld.so and page faults, in that order", () => {
-    const s = buildScenario({ kind: "launch", app: "player" }, COLD_MACHINE);
+    const s = buildScenario({ kind: "launch", app: "player" }, COLD_MACHINE, INITIAL_APPS);
     const order = ["clone", "cow", "execve", "map", "interp", "libraries", "relocate", "page-faults", "draw"];
     const positions = order.map((id) => ids(s).indexOf(id));
     expect(positions.every((p) => p >= 0)).toBe(true);
@@ -163,7 +163,7 @@ describe("launching an app", () => {
   });
 
   it("adds the shared libraries to the memory map", () => {
-    const s = buildScenario({ kind: "launch", app: "editor" }, COLD_MACHINE);
+    const s = buildScenario({ kind: "launch", app: "editor" }, COLD_MACHINE, INITIAL_APPS);
     const libs = step(s, "libraries");
     const before = packetAt(libs.frames, 0)!.headers.map((h) => h.title);
     const after = packetAt(libs.frames, 3)!.headers.map((h) => h.title);
@@ -193,7 +193,7 @@ describe("a keystroke", () => {
   });
 
   it("goes from the keyboard through the kernel and the compositor to the app", () => {
-    const s = buildScenario({ kind: "keystroke", app: "browser", key: "h" }, COLD_MACHINE);
+    const s = buildScenario({ kind: "keystroke", app: "browser", key: "h" }, COLD_MACHINE, INITIAL_APPS);
     const visited = s.steps.flatMap((x) => x.path);
     for (const node of ["inputdev", "usbhc", "irq", "usbdrv", "input", "shell", "ipc", "browser", "renderer"] as const) {
       expect(visited).toContain(node);
@@ -204,13 +204,13 @@ describe("a keystroke", () => {
 
 describe("copy and paste", () => {
   it("copy moves no text through the kernel", () => {
-    const s = buildScenario({ kind: "copy", app: "editor", text: "x" }, COLD_MACHINE);
+    const s = buildScenario({ kind: "copy", app: "editor", text: "x" }, COLD_MACHINE, INITIAL_APPS);
     expect(s.steps.some((x) => x.frames?.some((f) => f.packet.headers.some((h) => h.kind === "pipe")))).toBe(false);
     expect(step(s, "owner").ui?.clipboard).toEqual({ owner: "editor", text: "x" });
   });
 
   it("paste pipes the text from the owner to the target", () => {
-    const s = buildScenario({ kind: "paste", app: "browser", source: "editor", text: "hi" }, COLD_MACHINE);
+    const s = buildScenario({ kind: "paste", app: "browser", source: "editor", text: "hi" }, COLD_MACHINE, INITIAL_APPS);
     expect(step(s, "send").path.at(-1)).toBe("editor");
     expect(step(s, "write").path[0]).toBe("editor");
     expect(step(s, "read").path.at(-1)).toBe("browser");
@@ -220,8 +220,8 @@ describe("copy and paste", () => {
 
 describe("playing media", () => {
   it("adds the picture path for a video", () => {
-    const audio = buildScenario({ kind: "play", media: "audio" }, COLD_MACHINE);
-    const video = buildScenario({ kind: "play", media: "video" }, COLD_MACHINE);
+    const audio = buildScenario({ kind: "play", media: "audio" }, COLD_MACHINE, INITIAL_APPS);
+    const video = buildScenario({ kind: "play", media: "video" }, COLD_MACHINE, INITIAL_APPS);
     for (const id of ["video-decode", "present", "vblank"]) {
       expect(ids(audio)).not.toContain(id);
       expect(ids(video)).toContain(id);
@@ -229,7 +229,7 @@ describe("playing media", () => {
   });
 
   it("states PipeWire's defaults and the real-time policy", () => {
-    const s = buildScenario({ kind: "play", media: "audio" }, COLD_MACHINE);
+    const s = buildScenario({ kind: "play", media: "audio" }, COLD_MACHINE, INITIAL_APPS);
     expect(step(s, "quantum").body).toContain("1,024 samples");
     expect(step(s, "quantum").body).toContain("21 ms");
     expect(step(s, "realtime").body).toContain("SCHED_FIFO");
@@ -239,13 +239,13 @@ describe("playing media", () => {
 
 describe("power", () => {
   it("boots from the power button to the login screen", () => {
-    const s = buildScenario({ kind: "boot" }, COLD_MACHINE);
+    const s = buildScenario({ kind: "boot" }, COLD_MACHINE, INITIAL_APPS);
     expect(s.steps[0]?.id).toBe("power-button");
     expect(s.steps.at(-2)?.ui?.screen).toBe("login");
   });
 
   it("asks for an address with DHCP from 0.0.0.0 to everyone", () => {
-    const s = buildScenario({ kind: "boot" }, COLD_MACHINE);
+    const s = buildScenario({ kind: "boot" }, COLD_MACHINE, INITIAL_APPS);
     const discover = packetAt(step(s, "dhcp-discover").frames, 3)!;
     expect(discover.headers.map((h) => h.kind)).toEqual(["eth", "ip", "udp", "dhcp"]);
     expect(discover.headers[1]?.fields[0]?.value).toContain("0.0.0.0");
@@ -254,7 +254,7 @@ describe("power", () => {
   });
 
   it("forgets RAM at power-off but keeps the router's DNS cache", () => {
-    const s = buildScenario({ kind: "shutdown" }, WARM);
+    const s = buildScenario({ kind: "shutdown" }, WARM, INITIAL_APPS);
     const off = step(s, "power-off");
     expect(off.ui?.screen).toBe("off");
     expect(off.learns).toEqual({ arpCached: false, connectionOpen: false, pageCache: [] });

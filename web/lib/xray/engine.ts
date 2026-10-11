@@ -101,6 +101,7 @@ export function applyEffect(apps: AppState, ui: UiEffect | undefined): AppState 
   }
   if (ui.player) next = { ...next, player: { ...next.player, ...ui.player } };
   if (ui.clipboard !== undefined) next = { ...next, clipboard: ui.clipboard };
+  if (ui.program !== undefined) next = { ...next, program: ui.program };
   if (ui.terminalAppend || ui.terminalBusy !== undefined) {
     next = {
       ...next,
@@ -160,9 +161,12 @@ export function currentStep(state: PlayerState): Step | null {
   return visibleSteps(state.run.scenario, state.detail)[state.run.index] ?? null;
 }
 
-function committed(state: PlayerState): AppState {
+/** The apps as the next trace will start from them: the end of the current one. */
+export function committedApps(state: PlayerState): AppState {
   return state.run ? finalApps(state.run) : state.apps;
 }
+
+const committed = committedApps;
 
 function lastIndex(state: PlayerState): number {
   return state.run ? visibleSteps(state.run.scenario, state.detail).length - 1 : 0;
@@ -242,7 +246,8 @@ function closeApp(apps: AppState, app: AppId): AppState {
     case "browser":
       return { ...next, browser: FRESH_APPS.browser };
     case "terminal":
-      return { ...next, terminal: FRESH_APPS.terminal };
+      // Closing the terminal hangs up its pseudo-terminal, and a program running in it dies.
+      return { ...next, terminal: FRESH_APPS.terminal, program: null };
     case "editor":
       return { ...next, editor: FRESH_APPS.editor };
     case "player":
@@ -257,7 +262,7 @@ export function playerReducer(state: PlayerState, action: PlayerAction): PlayerS
       const apps = committed(state);
       // An app that is already starting or open isn't launched again.
       if (action.request.kind === "launch" && apps.windows[action.request.app] !== "closed") return state;
-      const scenario = buildScenario(action.request, state.machine);
+      const scenario = buildScenario(action.request, state.machine, apps);
       const seq = state.seq + 1;
       return {
         ...state,

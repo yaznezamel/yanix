@@ -37,6 +37,13 @@ describe("hardware activity", () => {
     expect(now.links.size).toBe(0);
   });
 
+  it("uses the parts a step names, while the signal stays at the core", () => {
+    const store: Step = { ...step(["marks"]), parts: ["cpu.core0.l1d", "cpu.core0.regs", "no.such.part"] };
+    const now = activityAt(TREE, store, 0);
+    expect(now.current).toEqual(new Set(["cpu", "cpu.core0"]));
+    expect(now.touched).toEqual(new Set(["cpu", "cpu.core0", "cpu.core0.l1d", "cpu.core0.regs"]));
+  });
+
   it("sends a disk command from core 0 through the interconnect and the I/O block", () => {
     const submit = activityAt(TREE, step(["nvme", "ssd"]), 1);
     expect([...submit.links]).toEqual(["computer:pcie-ssd"]);

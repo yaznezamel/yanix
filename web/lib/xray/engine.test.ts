@@ -15,7 +15,7 @@ import {
   type PlayerAction,
   type PlayerState,
 } from "./engine";
-import { APPS, COLD_MACHINE, NOTES_FILE } from "./apps";
+import { APPS, COLD_MACHINE, INITIAL_APPS, NOTES_FILE } from "./apps";
 import { buildScenario } from "./scenarios";
 import type { Step } from "./types";
 
@@ -162,7 +162,7 @@ describe("machineAt", () => {
 
 describe("remapIndex", () => {
   it("falls back to the nearest earlier step when the current one is hidden", () => {
-    const scenario = buildScenario({ kind: "search", query: "q" }, COLD_MACHINE);
+    const scenario = buildScenario({ kind: "search", query: "q" }, COLD_MACHINE, INITIAL_APPS);
     const deep = visibleSteps(scenario, "deep");
     const hidden = deep.findIndex((s) => s.id === "dns-udp");
     const mapped = remapIndex(scenario, "deep", "overview", hidden);
@@ -183,7 +183,7 @@ describe("appsAt", () => {
 
 describe("timing", () => {
   it("gives longer paths more travel time and scales with speed", () => {
-    const scenario = buildScenario({ kind: "search", query: "q" }, COLD_MACHINE);
+    const scenario = buildScenario({ kind: "search", query: "q" }, COLD_MACHINE, INITIAL_APPS);
     const long = scenario.steps.find((s) => s.path.length > 6)!;
     const single = scenario.steps.find((s) => s.path.length === 1)!;
     expect(travelMs(single, 1)).toBe(0);

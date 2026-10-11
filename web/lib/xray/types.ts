@@ -3,6 +3,8 @@
 // data lives in TypeScript for now; it moves to content/*.yaml once the
 // catalog API exists (FR12).
 
+import type { ProgramState } from "./marks/program";
+
 export type Layer = "user" | "kernel" | "hardware" | "network";
 
 export type NodeId =
@@ -19,6 +21,7 @@ export type NodeId =
   | "pipewire"
   | "netsvc"
   | "glibc"
+  | "marks"
   // kernel
   | "syscall"
   | "vfs"
@@ -123,7 +126,9 @@ export type HeaderKind =
   | "elf"
   | "vma"
   | "pcm"
-  | "reg";
+  | "reg"
+  | "syscall"
+  | "heap";
 
 export interface Field {
   name: string;
@@ -210,8 +215,11 @@ export interface BrowserState {
 }
 
 export interface TermLine {
-  kind: "banner" | "prompt" | "output" | "hint";
+  /** "ask" is a program's prompt, printed without a newline: what you type goes after it. */
+  kind: "banner" | "prompt" | "output" | "hint" | "ask";
   text: string;
+  /** What you typed after an "ask", once you pressed Enter. */
+  answer?: string;
 }
 
 export interface TerminalState {
@@ -248,6 +256,8 @@ export interface AppState {
   editor: EditorState;
   player: MediaState;
   clipboard: Clipboard | null;
+  /** The C program running in the terminal (examples/marks/marks.c), or null. */
+  program: ProgramState | null;
 }
 
 /** How a step changes what is on screen. */
@@ -268,6 +278,8 @@ export interface UiEffect {
   editorInsert?: string;
   player?: Partial<MediaState>;
   clipboard?: Clipboard | null;
+  /** The program's memory from this step on. */
+  program?: ProgramState | null;
 }
 
 export interface Step {
@@ -287,6 +299,11 @@ export interface Step {
   learns?: Partial<MachineState>;
   /** The page cache lookup that decides whether the disk is needed. */
   cache?: "hit" | "miss";
+  /**
+   * Parts of the hardware view the step uses besides its path's, by id, such
+   * as "cpu.core0.l1d": the units of the core that runs the step's code.
+   */
+  parts?: string[];
 }
 
 export type ScenarioRequest =
@@ -301,7 +318,11 @@ export type ScenarioRequest =
   | { kind: "boot" }
   | { kind: "login" }
   | { kind: "shutdown" }
-  | { kind: "restart" };
+  | { kind: "restart" }
+  /** ./marks in the terminal: the C program starts. */
+  | { kind: "runProgram" }
+  /** A line typed into the running program. */
+  | { kind: "programInput"; text: string };
 
 export interface Scenario {
   kind: ScenarioRequest["kind"];
