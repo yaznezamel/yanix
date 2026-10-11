@@ -214,6 +214,15 @@ export function DesktopLab() {
     start({ type: "start", request: req });
   }
 
+  /** After a "Try it" button on a phone, bring the story into view (the panel above it shrinks). */
+  function showStory() {
+    requestAnimationFrame(() =>
+      document
+        .getElementById("lab-story")
+        ?.scrollIntoView({ behavior: reduced ? "auto" : "smooth", block: "start" }),
+    );
+  }
+
   /** Opening a box's details pauses the trace, so the story does not run on unseen. */
   function handleSelect(id: NodeId) {
     setSelected(id);
@@ -352,7 +361,14 @@ export function DesktopLab() {
                 />
               </VirtualScreen>
             </div>
-            <QuickActions apps={apps} busy={active} onRequest={request} onCommand={handleCommand} />
+            <QuickActions
+              apps={apps}
+              playing={active ? (run?.scenario.title ?? null) : null}
+              onRequest={request}
+              onCommand={handleCommand}
+              onFinish={() => dispatch({ type: "finish" })}
+              onStarted={showStory}
+            />
             <div
               className={`grid min-h-0 flex-1 gap-3 ${
                 layout === "machine"
@@ -362,7 +378,7 @@ export function DesktopLab() {
                   : "md:grid-cols-2"
               }`}
             >
-              <div className={panelClass}>
+              <div id="lab-story" className={panelClass}>
                 <Narration
                   step={step}
                   next={nextStep}
@@ -410,6 +426,16 @@ export function DesktopLab() {
                   </button>
                 ))}
               </div>
+              {layout === "screen" && (
+                <button
+                  type="button"
+                  onClick={() => setLayoutOverride("machine")}
+                  title="Give the machine views more room (the Machine layout)"
+                  className="hidden min-h-7 rounded-md border border-lab-line px-2 text-[12px] text-lab-ink/85 hover:border-white/25 xl:block"
+                >
+                  Bigger map ⤢
+                </button>
+              )}
               {tab === "software" ? (
                 <span className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-lab-muted">
                   {(["user", "kernel", "hardware", "network"] as const).map((layer) => (

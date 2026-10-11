@@ -228,7 +228,7 @@ export function XRayMap({
                 y={b.y}
                 fontSize={10}
                 textAnchor="end"
-                fill={active ? SIGNAL : "rgba(255,255,255,0.35)"}
+                fill={active ? SIGNAL : "rgba(255,255,255,0.55)"}
                 className="font-mono"
               >
                 {b.label}
@@ -329,7 +329,7 @@ function NodeBox({
 }) {
   const hex = LAYER_HEX[node.layer];
   const lit = state === "current" || state === "path";
-  const opacity = state === "dim" ? 0.4 : state === "scenario" ? 0.6 : 1;
+  const opacity = state === "dim" ? 0.5 : state === "scenario" ? 0.65 : 1;
   const tall = node.h >= 60;
   const labelY = node.bar ? 19 : tall ? 22 : compact ? node.h / 2 + 4 : node.h / 2 - 2;
   const subY = tall ? 38 : node.h / 2 + 12;

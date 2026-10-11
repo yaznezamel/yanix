@@ -308,7 +308,7 @@ function Timeline({
               className="h-3 min-w-[4px] flex-1 rounded-[3px]"
               style={{
                 background: LAYER_HEX[layer],
-                opacity: state === "todo" ? 0.35 : state === "done" ? 0.65 : 1,
+                opacity: state === "todo" ? 0.45 : state === "done" ? 0.7 : 1,
               }}
             />
           );

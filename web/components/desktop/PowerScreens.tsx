@@ -24,7 +24,7 @@ export function OffScreen({ onPowerOn, restarting }: { onPowerOn: () => void; re
         <PowerIcon className="size-9" />
       </button>
       <p className="text-[13px] text-white/65">The computer is off. Press the power button.</p>
-      <span className="absolute bottom-4 right-5 flex items-center gap-2 text-[10.5px] text-white/30">
+      <span className="absolute bottom-4 right-5 flex items-center gap-2 text-[10.5px] text-white/55">
         <span className="size-1.5 rounded-full bg-[#ffb35c]/70" />
         standby power
       </span>
@@ -50,7 +50,7 @@ export function FirmwareScreen() {
         <circle cx="8" cy="8" r="6" fill="none" stroke="rgba(255,255,255,0.15)" strokeWidth="2" />
         <path d="M8 2a6 6 0 0 1 6 6" fill="none" stroke="#ffffff" strokeWidth="2" strokeLinecap="round" />
       </svg>
-      <p className="absolute bottom-5 font-mono text-[11px] text-white/40">
+      <p className="absolute bottom-5 font-mono text-[11px] text-white/60">
         Press F2 for setup · F12 for the boot menu (simulated firmware)
       </p>
     </div>
@@ -87,7 +87,7 @@ export function KernelScreen({ lines }: { lines: string[] }) {
   }, [lines.length]);
   return (
     <div ref={ref} className="h-full w-full overflow-hidden bg-black px-4 py-3 font-mono text-[12px] leading-[1.6] text-[#d7dde6]">
-      <p className="mb-1 text-[10.5px] text-white/35">Simulated console: real message formats, illustrative values</p>
+      <p className="mb-1 text-[10.5px] text-white/60">Simulated console: real message formats, illustrative values</p>
       {lines.map((line, i) => (
         <motion.p
           key={`${i}-${line}`}
