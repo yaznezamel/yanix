@@ -44,6 +44,11 @@ was built in one go at my request, ahead of the phases it borrows from (ADR
 `web/lib/xray/`, the machine view in `web/components/lab/` and the desktop in
 `web/components/desktop/`.
 
+Later, also at my request: `./marks`, a real C program
+(`examples/marks/marks.c`) that runs in the lab's terminal, with a Memory tab
+for its stack and heap. Its memory is modelled from strace and gdb
+measurements of the real program (ADR 0006).
+
 Tasks to make it mine, any time after phase 1 starts:
 
 - [ ] **L.1 Read the engine.** Walk through `engine.ts` and its tests, and
@@ -75,6 +80,15 @@ Tasks to make it mine, any time after phase 1 starts:
   *Docs:* MDN "transform" (SVG attribute); React "Referencing Values with Refs".
   *Done when:* you can derive `zoomAround`'s formula on paper and your test
   passes.
+- [ ] **L.7 Read the malloc model.** Build and run `examples/marks/` with
+  strace and gdb (its README says how), then walk through
+  `web/lib/xray/marks/heap.ts` and its tests: chunk sizes, the tcache, the top
+  chunk, why the first malloc() calls brk() and why realloc() moves the array
+  only sometimes. Predict the heap after four students, then check with gdb.
+  *Concepts:* the heap, chunk headers, free lists, immutable updates in
+  TypeScript.
+  *Docs:* `man 3 malloc`, `man 3 mallopt`; the glibc wiki's "MallocInternals".
+  *Done when:* your prediction matches gdb and you add it as a test.
 
 ### Hardware view (in progress, see ADR 0004)
 
@@ -91,7 +105,8 @@ phases, each one reviewed before the next:
   details, and the frame-rate work in
   [ADR 0005](adr/0005-draw-the-hardware-in-code-and-keep-zooming-cheap.md).
 - [ ] **H.3 Core and data path.** The core's units and the data path below
-  them, with each step's events animated at every level.
+  them, with each step's events animated at every level. Started: a step can
+  name the units it uses (`Step.parts`), and `./marks` does (ADR 0006).
 - [ ] **H.4 RAM, SSD and network controller.** DIMM chips and banks, the
   SSD's controller and flash, the NIC's DMA rings.
 - [ ] **H.5 Timeline sync and polish.** Following the signal across levels,

@@ -25,8 +25,9 @@ Configuration (environment variables, read on the server at request time):
 | `app/desktop/page.tsx` | The desktop lab ([ADR 0002](../docs/adr/0002-build-a-desktop-lab-ahead-of-the-roadmap.md)) |
 | `lib/api/` | API calls |
 | `lib/xray/` | Desktop lab model, with tests and no React: the node map (`nodes.ts`), the simulated computer (`apps.ts`), packets and data structures (`packets.ts`, `structs.ts`), one module per scenario (`scenarios/`) and the playback reducer (`engine.ts`) |
+| `lib/xray/marks/` | The C program `./marks` ([ADR 0006](../docs/adr/0006-model-a-real-c-program-from-measurements.md)): its source (`source.ts`, checked against `examples/marks/marks.c`), glibc's malloc as it drives it (`heap.ts`), what gdb measured (`layout.ts`) and its state and C semantics (`program.ts`); its traces are `scenarios/marks.ts` |
 | `lib/hardware/` | Hardware view model, with tests and no React: the parts of the computer as a tree (`hierarchy.ts`), the camera (`camera.ts`), level of detail and picking (`tree.ts`), which parts a trace step uses (`activity.ts`), the shapes of the drawings (`art.ts`) and a stroke font for writing on them (`strokeFont.ts`) |
-| `components/lab/` | Software map (SVG and Motion), narration, data panel, playback bar and timeline, and the playhead every view shares (`usePlayhead.ts`) |
+| `components/lab/` | Software map (SVG and Motion), narration, data panel, playback bar and timeline, the playhead every view shares (`usePlayhead.ts`), and the Memory tab for `./marks` (`MemoryView.tsx`) |
 | `components/hardware/` | The zoomable hardware view ([ADR 0004](../docs/adr/0004-draw-the-hardware-view-as-svg-with-its-own-camera.md)): the view and its camera (`HardwareView.tsx`), the parts (`Parts.tsx`), their drawings (`art.tsx`), the layer of names (`Labels.tsx`), the hover card (`PartCard.tsx`); how it stays fast is in [ADR 0005](../docs/adr/0005-draw-the-hardware-in-code-and-keep-zooming-cheap.md) |
 | `components/desktop/` | The simulated desktop: power screens, windows, taskbar, browser, terminal, text editor, media player |
 

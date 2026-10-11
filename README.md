@@ -25,6 +25,13 @@ through the kernel and the hardware:
   and the speakers; frames flipped at the display's refresh.
 - **Copy and paste:** the compositor brokers it; the text moves through a pipe
   only when you paste.
+- **Run a C program:** type `./marks` in the Terminal and answer its questions
+  (a name, three marks). Each line you type is traced through the TTY, the C
+  library, the kernel and the CPU, and the **Memory** tab shows the program's
+  stack frames and heap chunks changing: `strdup()` copying a name to the
+  heap, `realloc()` moving the array, the first `brk()` and page fault. The
+  program is [`examples/marks/marks.c`](examples/marks/), which you can build
+  and watch for real with strace and gdb.
 
 Pause, step, replay, or drag the timeline to any point. Switch between an
 overview and a deep dive. Caches stay warm between runs, so a second read,
@@ -41,7 +48,10 @@ a generic, illustrative PC
 
 It is a teaching model with scripted steps, not a live trace (see
 [ADR 0002](docs/adr/0002-build-a-desktop-lab-ahead-of-the-roadmap.md) and
-[ADR 0003](docs/adr/0003-model-one-desktop-linux-stack.md)).
+[ADR 0003](docs/adr/0003-model-one-desktop-linux-stack.md)). The C program's
+memory is modelled from measurements of the real program, and tests check the
+model against them
+([ADR 0006](docs/adr/0006-model-a-real-c-program-from-measurements.md)).
 
 ## What it will be
 
