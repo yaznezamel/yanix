@@ -6,6 +6,7 @@ import { whereIs } from "@/lib/hardware/activity";
 import { TREE, lineage } from "@/lib/hardware/tree";
 import { NODES } from "@/lib/xray/nodes";
 import type { CodeRef, NodeId, Step } from "@/lib/xray/types";
+import { sourceLine } from "@/lib/xray/marks/source";
 import { LAYER_HEX, LAYER_NAME, PHASE_NAME, TIMESCALE } from "./palette";
 
 interface NarrationProps {
@@ -161,14 +162,18 @@ function Intro() {
         <p className="text-[14px] leading-relaxed text-lab-ink/80">
           Use it like any computer: search the web in <strong className="text-lab-ink">Chromium</strong>,
           open notes.txt in the <strong className="text-lab-ink">Text Editor</strong>, play a sound in{" "}
-          <strong className="text-lab-ink">Videos</strong>, type, copy and paste. Or shut it down and
-          start it again from the Start menu.
+          <strong className="text-lab-ink">Videos</strong>, type, copy and paste, or run{" "}
+          <strong className="font-mono text-lab-ink">./marks</strong>, a small C program, in the{" "}
+          <strong className="text-lab-ink">Terminal</strong>. Or shut it down and start it again from the
+          Start menu.
         </p>
         <p className="text-[12.5px] leading-relaxed text-lab-muted">
           Every action is traced from your screen through the kernel and the hardware. Next to the
           screen, <strong className="font-medium text-lab-ink/90">Software path</strong> shows the code
           each step runs through, and <strong className="font-medium text-lab-ink/90">Hardware</strong>{" "}
-          shows the parts of the computer it uses: zoom into the CPU to see its cores. Click any box to
+          shows the parts of the computer it uses: zoom into the CPU to see its cores.{" "}
+          <strong className="font-medium text-lab-ink/90">Memory</strong> shows ./marks&apos;s stack and heap
+          as it runs. Click any box to
           learn what it is. The steps are scripted for teaching, not traced live, and simplified: wired
           Ethernet, IPv4, one example of each program.
         </p>
@@ -197,6 +202,9 @@ function StepStory({
   // The scrolling text is a new element for every step; the cue follows it.
   const { watch, more, scrollDown } = useMoreCue();
   const layers = Array.from(new Set(step.path.map((id) => NODES[id].layer)));
+  // A step of ./marks: the line of C it is about.
+  const program = step.ui?.program;
+  const code = program && program.stage !== "exited" ? sourceLine(program.at) : null;
 
   return (
     <section aria-label="Story" aria-live="polite" className="flex h-full min-h-0 flex-col gap-3 p-4">
@@ -239,6 +247,14 @@ function StepStory({
           <h2 className="text-xl font-semibold leading-tight text-lab-ink [text-wrap:balance]">
             {step.title}
           </h2>
+          {code && (
+            <p className="flex min-w-0 items-baseline gap-2 rounded-md border border-lab-line bg-lab-panel2 px-2.5 py-1.5 font-mono text-[12px]">
+              <span className="shrink-0 text-lab-muted">marks.c:{step.ui?.program?.at}</span>
+              <span className="min-w-0 truncate text-lab-ink" title={code}>
+                {code}
+              </span>
+            </p>
+          )}
           <p className="text-[14px] leading-relaxed text-lab-ink/85">{step.body}</p>
           <div className="flex flex-wrap items-center gap-1.5">
             {layers.map((layer) => (

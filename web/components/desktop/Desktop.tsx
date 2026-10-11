@@ -208,7 +208,9 @@ export function Desktop(props: DesktopProps) {
                   onPaste={() => props.onPaste("browser")}
                 />
               )}
-              {id === "terminal" && <TerminalApp state={apps.terminal} onCommand={props.onCommand} />}
+              {id === "terminal" && (
+                <TerminalApp state={apps.terminal} program={apps.program} onCommand={props.onCommand} />
+              )}
               {id === "editor" && (
                 <EditorApp
                   state={apps.editor}

@@ -4,10 +4,12 @@ import { MotionConfig, useReducedMotion } from "motion/react";
 import Link from "next/link";
 import { useEffect, useMemo, useReducer, useRef, useState } from "react";
 import { Desktop } from "@/components/desktop/Desktop";
+import { programReads } from "@/components/desktop/TerminalApp";
 import { VirtualScreen } from "@/components/desktop/VirtualScreen";
 import { HardwareView, type HardwareHandle } from "@/components/hardware/HardwareView";
 import {
   INITIAL_PLAYER,
+  committedApps,
   currentApps,
   fieldLocked,
   machineAt,
@@ -16,6 +18,8 @@ import {
   type PlayerAction,
 } from "@/lib/xray/engine";
 import { buildPath } from "@/lib/xray/geometry";
+import { fitInput } from "@/lib/xray/marks/program";
+import { MARKS_C } from "@/lib/xray/marks/source";
 import { framesAround } from "@/lib/xray/packets";
 import type { AppId, Detail, MachineState, NodeId, ScenarioRequest, TermLine } from "@/lib/xray/types";
 import { Narration } from "./Narration";
@@ -24,17 +28,19 @@ import { PlaybackBar } from "./PlaybackBar";
 import { QuickActions } from "./QuickActions";
 import { XRayMap } from "./XRayMap";
 import styles from "./lab.module.css";
+import { MemoryView } from "./MemoryView";
 import { LAYER_HEX, LAYER_NAME } from "./palette";
 import { usePlayhead } from "./usePlayhead";
 
 type LayoutMode = "screen" | "split" | "machine";
 
-/** The two ways to look inside: the software path a trace takes, or the hardware it runs on. */
-type MachineTab = "software" | "hardware";
+/** The ways to look inside: the software path a trace takes, the hardware it runs on, a program's memory. */
+type MachineTab = "software" | "hardware" | "memory";
 
 const MACHINE_TABS: { value: MachineTab; label: string }[] = [
   { value: "software", label: "Software path" },
   { value: "hardware", label: "Hardware" },
+  { value: "memory", label: "Memory" },
 ];
 
 const LEFT_BASIS: Record<LayoutMode, string> = {
@@ -110,18 +116,34 @@ function terminalReply(command: string): TermLine[] {
       return [
         echo,
         { kind: "output", text: "Traced: cat notes.txt   read a file through VFS, the page cache and the SSD" },
-        { kind: "output", text: "Also:   ls · clear · help" },
+        { kind: "output", text: "        ./marks        run a C program; watch its stack and heap in the Memory tab" },
+        { kind: "output", text: "Also:   ls · cat marks.c · make · clear · help" },
         { kind: "hint", text: "Other apps trace too: search in Chromium, open notes.txt in the Text Editor, play a sound in Videos." },
       ];
     case "ls":
-      return [echo, { kind: "output", text: "notes.txt" }];
+      return [echo, { kind: "output", text: "Makefile  marks  marks.c  notes.txt" }];
     case "cat":
+      if (args.join(" ") === "marks.c") {
+        return [
+          echo,
+          ...MARKS_C.map((text) => ({ kind: "output" as const, text: text.replace(/\t/g, "        ") })),
+          { kind: "hint", text: "Not traced: cat notes.txt is. Run the program with ./marks." },
+        ];
+      }
       return [echo, { kind: "output", text: `cat: ${args.join(" ") || "-"}: No such file or directory` }];
+    case "make":
+      return [echo, { kind: "output", text: "make: 'marks' is up to date." }];
+    case "marks":
+      return [
+        echo,
+        { kind: "output", text: "bash: marks: command not found" },
+        { kind: "hint", text: "bash looks for commands in PATH, not in the current directory: type ./marks" },
+      ];
     default:
       return [
         echo,
         { kind: "output", text: `bash: ${name}: command not found` },
-        { kind: "hint", text: "Only cat notes.txt is traced so far. Type help." },
+        { kind: "hint", text: "Only cat notes.txt and ./marks are traced. Type help." },
       ];
   }
 }
@@ -134,6 +156,8 @@ export function DesktopLab() {
   const [tab, setTab] = useState<MachineTab>("software");
   const resumeAfterScrub = useRef(false);
   const hardware = useRef<HardwareHandle>(null);
+  /** The first run of ./marks opens the Memory tab; after that the tab is yours to choose. */
+  const shownMemory = useRef(false);
 
   const run = state.run;
   const scenario = run?.scenario ?? null;
@@ -201,8 +225,19 @@ export function DesktopLab() {
   }
 
   function handleCommand(raw: string) {
+    // While the program reads, the line goes to it as typed: spaces and all.
+    if (programReads(committedApps(state).program)) {
+      request({ kind: "programInput", text: fitInput(raw) });
+      return;
+    }
     const command = raw.trim().replace(/\s+/g, " ");
-    if (command === "cat notes.txt") {
+    if (command === "./marks") {
+      if (!shownMemory.current) {
+        shownMemory.current = true;
+        setTab("memory");
+      }
+      request({ kind: "runProgram" });
+    } else if (command === "cat notes.txt") {
       request({ kind: "readFile" });
     } else if (command === "clear") {
       dispatch({ type: "terminal", clear: true });
@@ -423,7 +458,9 @@ export function DesktopLab() {
                 onKeyDown={(e) => {
                   if (e.key !== "ArrowLeft" && e.key !== "ArrowRight") return;
                   e.preventDefault();
-                  const next = tab === "software" ? "hardware" : "software";
+                  const i = MACHINE_TABS.findIndex((t) => t.value === tab);
+                  const step = e.key === "ArrowRight" ? 1 : MACHINE_TABS.length - 1;
+                  const next = MACHINE_TABS[(i + step) % MACHINE_TABS.length]!.value;
                   setTab(next);
                   document.getElementById(`machine-tab-${next}`)?.focus();
                 }}
@@ -490,6 +527,19 @@ export function DesktopLab() {
                     Not part of this step
                   </span>
                 </span>
+                <span
+                  aria-hidden={tab !== "memory"}
+                  className={`flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-lab-muted [grid-area:1/1] ${tab === "memory" ? "" : "invisible"}`}
+                >
+                  <span className="flex items-center gap-1.5">
+                    <span className="size-2.5 rounded-sm bg-signal/25 ring-1 ring-signal/60" />
+                    Changed in this step
+                  </span>
+                  <span className="flex items-center gap-1.5">
+                    <span className="font-mono text-lab-ink/80">?</span>
+                    Not written yet
+                  </span>
+                </span>
               </div>
             </div>
             <div className="relative min-h-0 flex-1">
@@ -521,6 +571,20 @@ export function DesktopLab() {
                 className={`absolute inset-0 ${tab === "hardware" ? "" : "invisible"}`}
               >
                 <HardwareView ref={hardware} step={step} reached={reached} reduced={reduced} />
+              </div>
+              <div
+                id="machine-panel-memory"
+                role="tabpanel"
+                aria-labelledby="machine-tab-memory"
+                inert={tab !== "memory"}
+                className={`absolute inset-0 pt-1 ${tab === "memory" ? "" : "invisible"}`}
+              >
+                <MemoryView
+                  program={apps.program}
+                  terminalOpen={apps.windows.terminal === "open"}
+                  onRun={() => handleCommand("./marks")}
+                  onOpenTerminal={() => request({ kind: "launch", app: "terminal" })}
+                />
               </div>
             </div>
           </div>
