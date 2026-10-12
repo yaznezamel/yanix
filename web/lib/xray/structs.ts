@@ -112,6 +112,28 @@ export function inputEvent(char: string, pressed = true): Header {
   };
 }
 
+/**
+ * The scan code hid-input reports just before each key change: the key's HID
+ * usage, with its page (0x07) in the top 16 bits (drivers/hid/hid-input.c,
+ * hidinput_hid_event()).
+ */
+export function mscScan(char: string): Header {
+  const info = keyInfo(char);
+  return {
+    kind: "evdev",
+    title: "struct input_event (scan code)",
+    bytes: 24,
+    fields: [
+      { name: "type", value: "EV_MSC (4)" },
+      { name: "code", value: "MSC_SCAN (4)" },
+      {
+        name: "value",
+        value: info ? `0x7${info.usage.toString(16).padStart(4, "0")}: HID page 0x07, usage ${hex(info.usage)}` : "the key's HID usage",
+      },
+    ],
+  };
+}
+
 export const synReport: Header = {
   kind: "evdev",
   title: "struct input_event (sync)",

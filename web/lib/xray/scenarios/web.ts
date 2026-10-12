@@ -13,7 +13,7 @@ import {
   tls,
   udp,
 } from "../packets";
-import type { Header, MachineState, NodeId, Scenario, Step } from "../types";
+import type { AwsNote, Header, MachineState, NodeId, Scenario, Step } from "../types";
 import { keysStep } from "./common";
 
 // A web search, from the Enter key to pixels: DNS (with ARP when the router's
@@ -79,6 +79,25 @@ function httpRequest(query: string): Header {
 const DNS_Q = "DNS query: the IPv4 address of www.example.com?";
 const DNS_A = "DNS answer: www.example.com is 203.0.113.10";
 
+// Where AWS does the same, for steps of either view: in the overview one step
+// sweeps the stack, in the deep dive one step per layer carries the note.
+const AWS_DNS_QUOTA: AwsNote = {
+  service: "Amazon Route 53 Resolver",
+  text: "On EC2 this query would go to the Route 53 Resolver, and each network interface may send it at most 1,024 packets per second, a quota that can't be raised. Every lookup here costs two packets, A and AAAA, which is why busy instances run a local DNS cache in front of it.",
+};
+const AWS_ENA_TX: AwsNote = {
+  service: "Elastic Network Adapter (ENA)",
+  text: "On current EC2 instances the network card is the Elastic Network Adapter, a Nitro card. Its driver in this same kernel, drivers/net/ethernet/amazon/ena, fills transmit rings the same way: descriptors in RAM, then a doorbell write that tells the card there is work.",
+};
+const AWS_ENA_RX: AwsNote = {
+  service: "Elastic Network Adapter (ENA)",
+  text: "An ENA card has several queue pairs, each with its own MSI-X interrupt, and receive-side scaling hashes each connection to one queue. Different vCPUs can then handle different connections at the same time.",
+};
+const AWS_FLOW_LOGS: AwsNote = {
+  service: "Amazon VPC Flow Logs",
+  text: "In a VPC, flow logs record connections like this one: addresses, ports, packets, bytes, and whether security groups and network ACLs accepted or rejected them. Their tcp-flags field is a bitmask of the flags seen: 2 for this SYN, 18 for the SYN-ACK that answers it.",
+};
+
 // ---------------------------------------------------------------- search
 
 function dnsSteps(m: MachineState): Step[] {
@@ -101,6 +120,10 @@ function dnsSteps(m: MachineState): Step[] {
       body: "glibc's resolver follows /etc/nsswitch.conf: /etc/hosts first, then DNS. /etc/resolv.conf names the DNS server: the home router, 192.168.1.1, as DHCP said at boot. Many distributions put a local cache (systemd-resolved) in between; this model leaves it out.",
       code: [{ project: "glibc", path: "nss/getaddrinfo.c", symbol: "getaddrinfo" }],
       timescale: "us",
+      aws: {
+        service: "Amazon Route 53 Resolver",
+        text: "On an EC2 instance, DHCP names a different DNS server: the Route 53 Resolver, at the VPC's base address plus two (10.0.0.2 in a 10.0.0.0/16 VPC), and also at 169.254.169.253.",
+      },
       ui: { browser: { status: "Resolving host…", progress: 0.1 } },
     },
     {
@@ -145,6 +168,7 @@ function dnsSteps(m: MachineState): Step[] {
       { project: "linux", path: "net/core/dev.c", symbol: "__dev_queue_xmit" },
     ],
     timescale: "us",
+    aws: AWS_DNS_QUOTA,
   });
 
   // Transmit, deep dive: one step per layer.
@@ -159,6 +183,11 @@ function dnsSteps(m: MachineState): Step[] {
       body: "glibc builds a 33-byte DNS question and sends it, with the IPv6 (AAAA) question, in one sendmmsg() system call. The CPU switches from user mode to kernel mode.",
       code: [{ project: "linux", path: "net/socket.c", symbol: "__sys_sendmmsg" }],
       timescale: "ns",
+      data: {
+        amount: "2 × 33 bytes",
+        what: "two DNS questions, A (IPv4) and AAAA (IPv6), copied from glibc's memory into the kernel by one system call",
+      },
+      aws: AWS_DNS_QUOTA,
     },
     {
       id: "dns-udp",
@@ -184,6 +213,10 @@ function dnsSteps(m: MachineState): Step[] {
         { project: "linux", path: "net/ipv4/ip_output.c", symbol: "ip_make_skb" },
       ],
       timescale: "us",
+      aws: {
+        service: "Amazon VPC route tables",
+        text: "A VPC's route table makes the same choice one level out: a local route for addresses inside the VPC, and 0.0.0.0/0 to an internet gateway or a NAT gateway for everything else. As in the FIB, the most specific matching route wins.",
+      },
     },
     {
       id: "dns-netfilter",
@@ -195,6 +228,10 @@ function dnsSteps(m: MachineState): Step[] {
       body: "Netfilter runs the OUTPUT and POSTROUTING hooks, where nftables or iptables rules could drop or rewrite the packet. Nothing objects, so it continues.",
       code: [{ project: "linux", path: "net/netfilter/core.c", symbol: "nf_hook_slow" }],
       timescale: "ns",
+      aws: {
+        service: "Security groups and network ACLs",
+        text: "nftables rules live in this kernel, so root on the machine can change them. A security group is a stateful firewall on an EC2 instance's network interface, outside its operating system: nothing inside the instance can turn it off. Network ACLs add stateless rules at the subnet's edge.",
+      },
     },
   );
   if (m.arpCached) {
@@ -239,6 +276,10 @@ function dnsSteps(m: MachineState): Step[] {
         body: "The kernel broadcasts an ARP request to every device on the local network: who has 192.168.1.1? Tell 192.168.1.23.",
         code: [{ project: "linux", path: "net/ipv4/arp.c", symbol: "arp_solicit" }],
         timescale: "us",
+        aws: {
+          service: "Amazon VPC",
+          text: "An EC2 instance asks the same about its gateway, the VPC router, which always sits at the subnet's base address plus one (10.0.0.1 in 10.0.0.0/24). A VPC doesn't support broadcast, though, so the request is never flooded to the other instances in the subnet.",
+        },
       },
       {
         id: "arp-reply",
@@ -261,6 +302,7 @@ function dnsSteps(m: MachineState): Step[] {
         body: "With the MAC address known, the Ethernet header goes on, the frame passes the queue and the driver, and the card fetches it from RAM with DMA.",
         code: [{ project: "linux", path: "net/core/dev.c", symbol: "dev_hard_start_xmit" }],
         timescale: "us",
+        aws: AWS_ENA_TX,
       },
       {
         id: "dns-neigh-release",
@@ -302,6 +344,7 @@ function dnsSteps(m: MachineState): Step[] {
         { project: "linux", path: "drivers/net/ethernet/realtek/r8169_main.c", symbol: "rtl8169_start_xmit" },
       ],
       timescale: "us",
+      aws: AWS_ENA_TX,
     },
     {
       id: "dns-dma",
@@ -312,6 +355,10 @@ function dnsSteps(m: MachineState): Step[] {
       title: "DMA: the card fetches the frame",
       body: "The network card reads the descriptor, then the frame itself, straight from RAM with DMA. From here on the CPU is free to do other work.",
       timescale: "us",
+      aws: {
+        service: "Elastic Network Adapter (ENA)",
+        text: "ENA's low-latency queue mode skips this fetch for small packets: the driver pushes the descriptor and the first 96 bytes of the packet straight into the card's memory. This 75-byte frame would fit whole, so the card would read nothing from RAM.",
+      },
     },
     {
       id: "dns-wire",
@@ -319,7 +366,7 @@ function dnsSteps(m: MachineState): Step[] {
       path: ["nic", "router"],
       frames: [frame(0, DNS_Q, ...onWire)],
       title: "On the wire",
-      body: "The card appends a 4-byte checksum (FCS) and sends the 75-byte frame as electrical signals over the Ethernet cable to the router.",
+      body: "The card appends a 4-byte checksum (FCS) and sends the frame, 79 bytes in all, as electrical signals over the Ethernet cable to the router. At 1 Gbit/s that takes under a microsecond.",
       timescale: "us",
     },
   );
@@ -333,6 +380,10 @@ function dnsSteps(m: MachineState): Step[] {
       title: "The router answers from its cache",
       body: "The router's DNS forwarder looked up www.example.com a moment ago and still has the answer cached, so nothing leaves your home.",
       timescale: "us",
+      aws: {
+        service: "Amazon Route 53 Resolver",
+        text: "The Route 53 Resolver is a caching resolver too: it keeps each answer for as long as the record's TTL allows, so repeated lookups from a VPC's instances are answered at once.",
+      },
     });
   } else {
     const fwdIp = ipv4(PUB, RES, "UDP");
@@ -349,6 +400,10 @@ function dnsSteps(m: MachineState): Step[] {
         title: "The router forwards the question",
         body: "The router's DNS forwarder (often dnsmasq) has nothing cached, so it asks your ISP's recursive resolver, sending from its own public address, 198.51.100.7.",
         timescale: "ms",
+        aws: {
+          service: "Amazon Route 53 Resolver",
+          text: "In a VPC the Route 53 Resolver does both jobs, the router's and the ISP resolver's: it answers from its cache or resolves the name itself. Names you choose, such as corp.example.com, can go to your own DNS servers instead, through a forwarding rule and an outbound endpoint.",
+        },
       },
       {
         id: "resolver-root",
@@ -376,6 +431,10 @@ function dnsSteps(m: MachineState): Step[] {
         title: "Ask example.com's own server",
         body: "The authoritative server answers: www.example.com is 203.0.113.10. Busy resolvers usually have the root and .com referrals cached already; this shows the full walk.",
         timescale: "ms",
+        aws: {
+          service: "Amazon Route 53",
+          text: "If example.com were a public hosted zone in Route 53, this server would be one of the four name servers Route 53 lists for every hosted zone, with names like ns-2048.awsdns-64.com, ns-2049.awsdns-65.net, ns-2050.awsdns-66.org and ns-2051.awsdns-67.co.uk.",
+        },
       },
       {
         id: "resolver-answer",
@@ -386,6 +445,10 @@ function dnsSteps(m: MachineState): Step[] {
         learns: { dnsCached: true },
         body: "The resolver caches the answer for its TTL and sends it to the router, which keeps a copy in its own cache for next time.",
         timescale: "ms",
+        aws: {
+          service: "Amazon Route 53",
+          text: "The TTL, 3600 seconds here, is how long every cache on the way may reuse this answer. It also sets how fast DNS failover can be: when a Route 53 health check switches a record to a standby, resolvers keep handing out the old address until their copy expires.",
+        },
       },
     );
   }
@@ -419,6 +482,7 @@ function dnsSteps(m: MachineState): Step[] {
         { project: "linux", path: "net/ipv4/udp.c", symbol: "udp_rcv" },
       ],
       timescale: "us",
+      aws: AWS_ENA_RX,
     },
     {
       id: "rx-dma",
@@ -443,6 +507,7 @@ function dnsSteps(m: MachineState): Step[] {
         { project: "linux", path: "net/core/dev.c", symbol: "__napi_schedule" },
       ],
       timescale: "us",
+      aws: AWS_ENA_RX,
     },
     {
       id: "rx-napi",
@@ -560,6 +625,7 @@ function tcpSteps(): Step[] {
         { project: "linux", path: "net/ipv4/tcp_output.c", symbol: "tcp_connect" },
       ],
       timescale: "us",
+      aws: AWS_FLOW_LOGS,
     },
     {
       id: "tcp-connect",
@@ -589,6 +655,7 @@ function tcpSteps(): Step[] {
       body: "IP routes it to the router (the default gateway), the neighbour table supplies the router's MAC address from its cache, and the qdisc, driver and DMA send it out.",
       code: [{ project: "linux", path: "net/ipv4/ip_output.c", symbol: "__ip_queue_xmit" }],
       timescale: "us",
+      aws: AWS_FLOW_LOGS,
     },
     {
       id: "tcp-nat",
@@ -601,6 +668,10 @@ function tcpSteps(): Step[] {
       title: "NAT: the router swaps the address",
       body: "The router replaces the private source address 192.168.1.23 with its public address 198.51.100.7, records the mapping in its connection table, lowers the TTL by one and forwards the SYN across the internet.",
       timescale: "ms",
+      aws: {
+        service: "AWS NAT gateway",
+        text: "A NAT gateway does this for instances in a private subnet: it replaces their private source address with its own Elastic IP address and translates the replies back. Each of its addresses supports up to 55,000 simultaneous connections to each unique destination (the same IP address, port and protocol).",
+      },
     },
     {
       id: "tcp-synack",
@@ -613,6 +684,10 @@ function tcpSteps(): Step[] {
       title: "SYN-ACK comes back",
       body: "The server accepts with a SYN-ACK. The router finds the mapping in its connection table, rewrites the destination back to 192.168.1.23 and sends it to this computer.",
       timescale: "ms",
+      aws: {
+        service: "Elastic Load Balancing",
+        text: "Behind an Application Load Balancer, this SYN-ACK would come from the load balancer itself: an ALB completes the handshake and opens its own connections to your servers. A Network Load Balancer passes the TCP connection through, so the server behind it answers.",
+      },
     },
     {
       id: "tcp-established",
@@ -690,6 +765,14 @@ function tlsSteps(): Step[] {
       body: "Encryption happens in user space. BoringSSL, inside the network service, builds a ClientHello: the TLS versions it supports, a key share and the server name (SNI), still readable at this point. The kernel just carries bytes.",
       code: [{ project: "boringssl", path: "ssl/handshake_client.cc" }],
       timescale: "ms",
+      data: {
+        amount: "1,541 bytes",
+        what: "the ClientHello in one TLS record, as Chromium 141 sent it (measured). 1,216 of those bytes are one post-quantum key share, ML-KEM-768 with X25519, so on Ethernet it takes two TCP segments.",
+      },
+      aws: {
+        service: "Application Load Balancer",
+        text: "The server name in this ClientHello (SNI) is how one load balancer serves many sites: an ALB's HTTPS listener can hold several certificates and picks the one that matches the name the browser asked for.",
+      },
     },
     {
       id: "tls-serverhello",
@@ -699,6 +782,14 @@ function tlsSteps(): Step[] {
       title: "ServerHello and an encrypted certificate",
       body: "The server picks TLS 1.3 and sends its key share, then encrypts everything after it, certificate included. The kernel acknowledges and orders the TCP segments and wakes the network service to read them.",
       timescale: "ms",
+      data: {
+        amount: "1,120 bytes",
+        what: "the server's key share alone, when it accepts the post-quantum group: an ML-KEM-768 ciphertext (1,088 bytes, FIPS 203) and an X25519 key (32 bytes). The certificate chain follows, encrypted.",
+      },
+      aws: {
+        service: "Elastic Load Balancing",
+        text: "On an ALB, the listener's security policy decides what the server may pick here: which TLS versions and cipher suites it accepts. ELBSecurityPolicy-TLS13-1-2-2021-06, for example, allows TLS 1.3 and 1.2 only.",
+      },
     },
     {
       id: "tls-verify",
@@ -708,6 +799,10 @@ function tlsSteps(): Step[] {
       learns: { connectionOpen: true },
       body: "Both sides derive the same session keys from the key shares. The network service checks that the certificate is valid for www.example.com and chains to a trusted root, and that the server proved it holds the private key. The lock icon appears.",
       ui: { browser: { secure: true, progress: 0.5 } },
+      aws: {
+        service: "AWS Certificate Manager",
+        text: "The certificate checked here could come from ACM, which issues public certificates for load balancers and CloudFront at no extra cost and renews them automatically before they expire.",
+      },
     },
     {
       id: "tls-finished",
@@ -718,6 +813,10 @@ function tlsSteps(): Step[] {
       title: "Client Finished",
       body: "The browser sends its Finished message, already encrypted. From here on, every byte is ciphertext to the kernel, the router and your ISP.",
       timescale: "ms",
+      data: {
+        amount: "36 bytes",
+        what: "the Finished message, as Chromium 141 sent it (measured): a 32-byte keyed hash (HMAC-SHA-256) of the whole handshake, in a 58-byte encrypted record",
+      },
     },
   ];
 }
@@ -736,6 +835,10 @@ function httpSteps(query: string, reused: boolean): Step[] {
       code: [{ project: "chromium", path: "net/spdy/" }],
       timescale: "ms",
       ui: { browser: { status: "Waiting for www.example.com…", progress: 0.6 } },
+      aws: {
+        service: "Application Load Balancer",
+        text: "An ALB decrypts this request and routes on what it carries: the host name, the path (/search here), headers or query strings. It takes HTTP/2 from browsers and sends HTTP/1.1 to its targets unless the target group asks for HTTP/2 or gRPC.",
+      },
     },
     {
       id: "http-server",
@@ -744,6 +847,10 @@ function httpSteps(query: string, reused: boolean): Step[] {
       title: "The server builds the page",
       body: "The server runs the search and renders the HTML. This happens far away; your computer just waits, and the browser stays responsive.",
       timescale: "ms",
+      aws: {
+        service: "Elastic Load Balancing",
+        text: "On AWS the page could be built by EC2 instances, containers on Amazon ECS, or a Lambda function: an Application Load Balancer can send requests to any of them, and the browser can't tell which.",
+      },
     },
     {
       id: "http-response",
@@ -754,6 +861,14 @@ function httpSteps(query: string, reused: boolean): Step[] {
       body: "The HTML arrives as many TCP segments. The kernel acknowledges them, puts them in order and queues the bytes; the network service reads and decrypts them.",
       timescale: "ms",
       ui: { browser: { status: "Transferring data from www.example.com…", progress: 0.8 } },
+      data: {
+        amount: "1,448 bytes",
+        what: "the most ciphertext one TCP segment carries on Ethernet: a 1,500-byte packet minus 20 bytes of IP header and 32 of TCP header with timestamps. A Linux server may send 10 segments, about 14 KB, before the first ACK comes back (TCP_INIT_CWND).",
+      },
+      aws: {
+        service: "Amazon CloudFront",
+        text: "CloudFront can compress a page like this with Brotli or gzip on the way, when the browser's Accept-Encoding header allows it, so fewer segments cross the internet.",
+      },
     },
     {
       id: "http-ipc",
@@ -809,6 +924,10 @@ export function webSearch(query: string, m: MachineState): Scenario {
     phase: "render",
     path: ["browser"],
     title: reused ? "Done: one round trip" : "Done, and a lot got cached",
+    aws: {
+      service: "Elastic Load Balancing",
+      text: "Reuse has a time limit: an Application Load Balancer closes a connection that has carried no data for 60 seconds, its default idle timeout (adjustable from 1 to 4,000 seconds).",
+    },
     body: reused
       ? "One encrypted request and response, no handshakes. Close the browser to drop the connection, or clear the caches to start cold."
       : "Search again and it is faster: the router and resolver cached the address, the kernel cached the router's MAC address, and the browser keeps this connection open.",

@@ -11,6 +11,11 @@ import { APP_NODE } from "./launch";
 
 const MIME = "text/plain;charset=utf-8";
 
+/** The format as a Wayland string argument: a 32-bit length, then the bytes and a NUL, padded to 4. */
+const MIME_ARG = 4 + Math.ceil((MIME.length + 1) / 4) * 4;
+/** Every Wayland message starts with 8 bytes: the object's id, then the size and opcode. */
+const HEADER = 8;
+
 const nameOf = (app: AppId) => (app === "editor" ? "the text editor" : APPS[app].name);
 const capital = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
 
@@ -35,7 +40,7 @@ export function copy(app: "browser" | "editor", text: string): Scenario {
       id: "data-source",
       phase: "clipboard",
       path: [node],
-      frames: [dataFrame(0, "Wayland message", "A new data source", wayland("wl_data_source.offer", [{ name: "mime_type", value: MIME }]))],
+      frames: [dataFrame(0, "Wayland message", "A new data source", wayland("wl_data_source.offer", [{ name: "mime_type", value: MIME }], HEADER + MIME_ARG))],
       title: "Offering the text, not sending it",
       body: `${Name} creates a Wayland data source and lists the formats it can supply, such as ${MIME}. The text itself stays in ${name}'s own memory.`,
       code:
@@ -53,10 +58,14 @@ export function copy(app: "browser" | "editor", text: string): Scenario {
           0,
           "Wayland message",
           "“The clipboard is mine”",
-          wayland("wl_data_device.set_selection", [
-            { name: "source", value: "the new data source" },
-            { name: "serial", value: "from your Ctrl+C key event" },
-          ]),
+          wayland(
+            "wl_data_device.set_selection",
+            [
+              { name: "source", value: "the new data source" },
+              { name: "serial", value: "from your Ctrl+C key event" },
+            ],
+            HEADER + 4 + 4,
+          ),
         ),
       ],
       title: "set_selection: “the clipboard is mine”",
@@ -84,6 +93,10 @@ export function copy(app: "browser" | "editor", text: string): Scenario {
       title: "Copied? Not yet",
       body: `Copy only announced that ${name} can supply text; the bytes move when someone pastes. Some compositors fetch a copy straight away so the text outlives the app (GNOME's does). This model doesn't: close ${name} and the clipboard is empty.`,
       code: [{ project: "mutter", path: "src/core/meta-clipboard-manager.c" }],
+      aws: {
+        service: "Amazon S3 presigned URLs",
+        text: "Copying is like handing out an S3 presigned URL instead of the file: nothing is transferred until someone uses the link, and if the object is deleted first, the link leads nowhere. Close the app and the clipboard is empty for the same reason.",
+      },
     },
   );
   return { kind: "copy", app, title: "Copy", focus: "split", steps };
@@ -103,7 +116,7 @@ export function paste(app: "browser" | "editor", source: AppId, text: string): S
       phase: "clipboard",
       mode: "deep",
       path: ["shell", "syscall", "ipc", "syscall", node],
-      frames: [dataFrame(0, "Wayland message", "Sent when the app got focus", wayland("wl_data_offer.offer", [{ name: "mime_type", value: MIME }]))],
+      frames: [dataFrame(0, "Wayland message", "Sent when the app got focus", wayland("wl_data_offer.offer", [{ name: "mime_type", value: MIME }], HEADER + MIME_ARG))],
       title: "It already knows what's on offer",
       body: `When ${name} got keyboard focus, the compositor sent it a wl_data_offer listing the clipboard's formats. So it knows text is available and picks ${MIME}.`,
       code: [{ project: "wayland", path: "protocol/wayland.xml" }],
@@ -117,6 +130,10 @@ export function paste(app: "browser" | "editor", source: AppId, text: string): S
       body: `${Name} creates a pipe: a small buffer in the kernel with a write end and a read end, each an open file. It keeps the read end.`,
       code: [{ project: "linux", path: "fs/pipe.c", symbol: "do_pipe2" }],
       timescale: "us",
+      data: {
+        amount: "64 KiB",
+        what: "the pipe's default capacity: 16 slots of one 4 KiB page each (PIPE_DEF_BUFFERS). A writer with more than that waits until the reader drains some.",
+      },
     },
     {
       id: "receive",
@@ -127,10 +144,14 @@ export function paste(app: "browser" | "editor", source: AppId, text: string): S
           0,
           "Wayland message",
           "“Write it here”",
-          wayland("wl_data_offer.receive", [
-            { name: "mime_type", value: MIME },
-            { name: "fd", value: "the pipe's write end, sent as SCM_RIGHTS" },
-          ]),
+          wayland(
+            "wl_data_offer.receive",
+            [
+              { name: "mime_type", value: MIME },
+              { name: "fd", value: "the pipe's write end, sent as SCM_RIGHTS" },
+            ],
+            HEADER + MIME_ARG,
+          ),
         ),
       ],
       title: "receive(): “write it here”",
@@ -141,6 +162,14 @@ export function paste(app: "browser" | "editor", source: AppId, text: string): S
         { project: "wayland", path: "src/connection.c", symbol: "wl_connection_flush" },
       ],
       timescale: "us",
+      data: {
+        amount: "40 bytes + 1 fd",
+        what: "the message: an 8-byte header and the format's name. The pipe's write end travels beside it as SCM_RIGHTS ancillary data, not as bytes of the message.",
+      },
+      aws: {
+        service: "AWS Resource Access Manager",
+        text: "Sending a file descriptor shares the pipe itself, not a copy of it, much as AWS RAM shares a resource such as a subnet with another account: both use the one resource, and nothing is duplicated.",
+      },
     },
     {
       id: "send",
@@ -151,10 +180,14 @@ export function paste(app: "browser" | "editor", source: AppId, text: string): S
           0,
           "Wayland message",
           "Forwarded to the owner",
-          wayland("wl_data_source.send", [
-            { name: "mime_type", value: MIME },
-            { name: "fd", value: "the same pipe's write end" },
-          ]),
+          wayland(
+            "wl_data_source.send",
+            [
+              { name: "mime_type", value: MIME },
+              { name: "fd", value: "the same pipe's write end" },
+            ],
+            HEADER + MIME_ARG,
+          ),
         ),
       ],
       title: "The compositor passes it on",
@@ -171,6 +204,10 @@ export function paste(app: "browser" | "editor", source: AppId, text: string): S
       body: `${SourceName} write()s the text into the pipe and closes its end. The kernel copies the bytes into the pipe's buffer and wakes up whoever waits on the read end.`,
       code: [{ project: "linux", path: "fs/pipe.c", symbol: "anon_pipe_write" }],
       timescale: "us",
+      aws: {
+        service: "Amazon S3 presigned URLs",
+        text: "The compositor set up this transfer but never touches the text, like an app that hands a client an S3 presigned URL: the client then downloads straight from S3, and the app's own servers never carry the bytes.",
+      },
     },
     {
       id: "read",

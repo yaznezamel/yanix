@@ -30,6 +30,10 @@ export function play(media: Media, m: MachineState): Scenario {
         : `The player reads ${file.slice(file.lastIndexOf("/") + 1)} (${kind}). It isn't in the page cache, so the reads go all the way down to the SSD, the same path as opening any file. Players read ahead in chunks while they play.`,
       code: [{ project: "linux", path: "mm/filemap.c", symbol: "filemap_read" }],
       timescale: "us",
+      aws: {
+        service: "Amazon S3",
+        text: "Reading ahead in chunks is how players stream from S3 too: a byte-range GET fetches just the next part of a large object, so playback can start before the whole file has arrived.",
+      },
     },
     {
       id: "decode",
@@ -39,6 +43,14 @@ export function play(media: Media, m: MachineState): Scenario {
       title: "Decoding: compressed to raw samples",
       body: "The player's decoder (GStreamer) turns the compressed Opus stream into raw samples: 48,000 per second for each of the two channels. This is ordinary work on the CPU, in user space.",
       timescale: "us",
+      data: {
+        amount: "384,000 bytes a second",
+        what: "of decoded sound in PipeWire's 32-bit float format: 48,000 samples × 2 channels × 4 bytes. As 16-bit samples, half that.",
+      },
+      aws: {
+        service: "AWS Elemental MediaConvert",
+        text: "This is the work AWS Elemental MediaConvert does at scale: it decodes media files and encodes them again in the formats and sizes each device needs, on AWS's machines instead of yours.",
+      },
     },
   ];
 
@@ -51,6 +63,14 @@ export function play(media: Media, m: MachineState): Scenario {
       body: "Decoding video is heavy, so the player can hand it to the GPU's video decoder through VA-API and the DRM driver. Each decoded frame stays in GPU memory as a buffer other processes can share (a dma-buf), so the pixels are never copied around.",
       code: [{ project: "linux", path: "drivers/gpu/drm/drm_ioctl.c" }],
       timescale: "ms",
+      data: {
+        amount: "3,110,400 bytes",
+        what: "per decoded 1920×1080 frame in NV12, the layout VA-API decoders give for 8-bit video: 1.5 bytes per pixel. At 30 frames a second that is 93 MB/s, which is why the frames stay in GPU memory.",
+      },
+      aws: {
+        service: "Amazon EC2 G4dn instances",
+        text: "GPU instances such as G4dn, with NVIDIA T4 GPUs, carry the same kind of fixed-function video decoder and encoder, used to transcode video or stream games without loading the CPUs.",
+      },
     });
   }
 
@@ -79,6 +99,14 @@ export function play(media: Media, m: MachineState): Scenario {
         { project: "linux", path: "fs/timerfd.c" },
       ],
       timescale: "ms",
+      data: {
+        amount: "8 KiB",
+        what: "per quantum: 1,024 samples × 2 channels × 4 bytes of float, mixed and passed on every 21.3 ms (1,024 ÷ 48,000 s)",
+      },
+      aws: {
+        service: "AWS Elemental MediaLive",
+        text: "Live media keeps the same kind of deadline at any scale: AWS Elemental MediaLive encodes live video as it arrives, and it can't fall behind for long, because viewers' players, like this sound card, consume at a fixed rate.",
+      },
     },
     {
       id: "realtime",
@@ -113,6 +141,10 @@ export function play(media: Media, m: MachineState): Scenario {
       body: "The HD Audio controller works through a list of buffer segments in RAM (its buffer descriptor list) and fetches the samples with DMA at exactly the sample rate, whatever the CPU is doing.",
       code: [{ project: "linux", path: "sound/hda/core/stream.c", symbol: "snd_hdac_stream_setup" }],
       timescale: "us",
+      data: {
+        amount: "192,000 bytes a second",
+        what: "for 16-bit stereo at 48 kHz: 48,000 × 2 channels × 2 bytes, fetched steadily whatever the CPU is doing. Cards fed 24- or 32-bit samples (in 4-byte slots) fetch twice that.",
+      },
     },
     {
       id: "codec",
@@ -149,14 +181,18 @@ export function play(media: Media, m: MachineState): Scenario {
             0,
             "Wayland message",
             "A new frame for the window",
-            wayland("wl_surface.attach", [{ name: "buffer", value: "the decoded frame, shared, not copied" }]),
-            wayland("wl_surface.commit", [{ name: "meaning", value: "show the new state" }]),
+            wayland("wl_surface.attach", [{ name: "buffer", value: "the decoded frame, shared, not copied" }], 20),
+            wayland("wl_surface.commit", [{ name: "meaning", value: "show the new state" }], 8),
           ),
         ],
         title: "Each frame when the sound says so",
         body: "The player shows each video frame when the audio clock reaches the frame's timestamp, so picture and sound stay in sync. It attaches the frame's buffer to its window's surface and commits it to the compositor.",
         code: [{ project: "wayland", path: "protocol/wayland.xml" }],
         timescale: "ms",
+        data: {
+          amount: "28 bytes",
+          what: "two Wayland messages, attach (20 bytes) and commit (8). The frame's pixels, about 3.1 MB at 1080p, stay where the GPU decoded them; only a reference travels.",
+        },
       },
       {
         id: "vblank",

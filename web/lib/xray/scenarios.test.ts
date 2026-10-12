@@ -3,9 +3,9 @@ import { APPS, COLD_MACHINE, INITIAL_APPS, MEDIA, NOTES_FILE } from "./apps";
 import { visibleSteps } from "./engine";
 import { buildPath, nodeIndexAt } from "./geometry";
 import { BANDS, NODES, NODE_IDS, VIEW } from "./nodes";
-import { packetAt, packetBytes } from "./packets";
+import { dataOf, packetAt, packetBytes } from "./packets";
 import { buildScenario } from "./scenarios";
-import { hidReport, inputEvent, keyInfo, nvmeRead, waylandKey } from "./structs";
+import { hidReport, inputEvent, keyInfo, mscScan, nvmeRead, waylandKey } from "./structs";
 import type { MachineState, Scenario, ScenarioRequest } from "./types";
 
 const WARM: MachineState = {
@@ -79,6 +79,20 @@ describe.each(variants)("$name", ({ scenario }) => {
     }
   });
 
+  it("gives data amounts and short AWS notes that name a service", () => {
+    for (const s of scenario.steps) {
+      const data = dataOf(s);
+      if (data) {
+        expect(data.amount).toMatch(/\d/);
+        expect(data.what.length).toBeGreaterThan(10);
+      }
+      if (s.aws) {
+        expect(s.aws.service.length).toBeGreaterThan(2);
+        expect(s.aws.text.split(/\s+/).length).toBeLessThanOrEqual(60);
+      }
+    }
+  });
+
   it("plays in both detail levels", () => {
     expect(visibleSteps(scenario, "overview").length).toBeGreaterThan(2);
     expect(visibleSteps(scenario, "deep").length).toBeGreaterThanOrEqual(
@@ -109,6 +123,12 @@ describe("web search", () => {
     const nat = step(cold, "tcp-nat");
     expect(packetAt(nat.frames, 1)!.headers.find((h) => h.kind === "ip")?.fields[0]?.value).toBe("192.168.1.23");
     expect(packetAt(nat.frames, 2)!.headers.find((h) => h.kind === "ip")?.fields[0]?.value).toBe("198.51.100.7");
+  });
+
+  it("says how many bytes the handshakes move", () => {
+    expect(dataOf(step(cold, "tcp-syn"))?.amount).toBe("74 bytes + 4");
+    expect(dataOf(step(cold, "tls-hello"))?.amount).toBe("1,541 bytes");
+    expect(dataOf(step(cold, "dns-syscall"))?.amount).toBe("2 × 33 bytes");
   });
 
   it("encrypts the request between the network service and the kernel", () => {
@@ -192,6 +212,18 @@ describe("a keystroke", () => {
     expect(hidReport("H").fields[0]?.value).toContain("Shift");
   });
 
+  it("reports the scan code before the key, as hid-input does", () => {
+    expect(mscScan("h").fields.at(-1)?.value).toContain("0x7000b");
+    const s = buildScenario({ kind: "keystroke", app: "editor", key: "h" }, COLD_MACHINE, INITIAL_APPS);
+    const queued = packetAt(step(s, "evdev").frames, 1)!;
+    expect(queued.headers.map((h) => h.title)).toEqual([
+      "struct input_event (scan code)",
+      "struct input_event",
+      "struct input_event (sync)",
+    ]);
+    expect(dataOf(step(s, "evdev"))?.amount).toBe("72 bytes");
+  });
+
   it("goes from the keyboard through the kernel and the compositor to the app", () => {
     const s = buildScenario({ kind: "keystroke", app: "browser", key: "h" }, COLD_MACHINE, INITIAL_APPS);
     const visited = s.steps.flatMap((x) => x.path);
@@ -207,6 +239,12 @@ describe("copy and paste", () => {
     const s = buildScenario({ kind: "copy", app: "editor", text: "x" }, COLD_MACHINE, INITIAL_APPS);
     expect(s.steps.some((x) => x.frames?.some((f) => f.packet.headers.some((h) => h.kind === "pipe")))).toBe(false);
     expect(step(s, "owner").ui?.clipboard).toEqual({ owner: "editor", text: "x" });
+  });
+
+  it("sizes the Wayland messages as they go over the socket", () => {
+    const s = buildScenario({ kind: "copy", app: "editor", text: "x" }, COLD_MACHINE, INITIAL_APPS);
+    expect(dataOf(step(s, "data-source"))?.amount).toBe("40 bytes");
+    expect(dataOf(step(s, "set-selection"))?.amount).toBe("16 bytes");
   });
 
   it("paste pipes the text from the owner to the target", () => {
