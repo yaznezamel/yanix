@@ -51,11 +51,12 @@ jobs:
       - run: pnpm build
 
   examples:
-    name: Examples (build and run marks.c)
+    name: Examples (build and run the C programs)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - run: sh examples/marks/test.sh
+      - run: sh examples/cores/test.sh
 
   compose:
     name: docker compose up (end to end)
