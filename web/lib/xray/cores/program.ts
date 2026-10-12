@@ -13,10 +13,15 @@ import { MARKS, MAX_THREADS } from "./layout";
 // kernel weighs much more (load, caches, power), and the real program prints
 // where each thread finished, which changes from run to run.
 
-export type CoresStage = "running" | "threads" | "exited";
+/** Not started yet (bash is about to run it), running, blocked in fgets() for a number, or gone. */
+export type CoresStage = "starting" | "running" | "threads" | "exited";
 
-/** Where a thread is: waiting for a core, running add_up(), finished, or joined by main(). */
-export type ThreadState = "queued" | "running" | "done" | "joined";
+/**
+ * Where a thread is: being created (glibc has its stack and descriptor, the
+ * kernel has no task yet), waiting for a core, running add_up(), finished, or
+ * joined by main().
+ */
+export type ThreadState = "new" | "queued" | "running" | "done" | "joined";
 
 export interface Worker {
   /** 1 to 4: the order main() created them in, as the program numbers them. */
@@ -24,7 +29,7 @@ export interface Worker {
   first: number;
   count: number;
   state: ThreadState;
-  /** The core the scheduler placed it on: it runs, and finishes, there. */
+  /** The core the scheduler placed it on: it runs, and finishes, there. Not placed yet while new. */
   core: number;
   /** Which of glibc's stack mappings it uses (0 is the first ever made). */
   stack: number;
@@ -32,6 +37,25 @@ export interface Worker {
   late: boolean;
   /** add_up()'s result, once it has finished. */
   sum: number | null;
+}
+
+/**
+ * slices[t] in main()'s frame. The compound literal that main() assigns
+ * names marks, first and count; C zeroes the members it does not name, so
+ * sum and cpu are 0 until the thread writes its result.
+ */
+export interface SliceValue {
+  first: number;
+  count: number;
+  sum: number;
+  cpu: number;
+}
+
+/** ids[t]: the pthread_t that pthread_create() stored, the address of the thread's descriptor. */
+export interface IdValue {
+  /** The thread it named, and the stack mapping its descriptor sits at the top of. */
+  thread: number;
+  stack: number;
 }
 
 /** What one core runs, as far as this program goes. */
@@ -59,6 +83,14 @@ export interface CoresState {
   threads: number | null;
   per: number | null;
   total: number | null;
+  /** The arrays main() and the threads share, element by element; null until written. */
+  slices: (SliceValue | null)[];
+  ids: (IdValue | null)[];
+  /**
+   * Change keys of main()'s loop variables that still hold an earlier
+   * round's values: the bytes stay on the stack until this round writes them.
+   */
+  stale: string[];
   /** This round's threads, in the order they were created. */
   workers: Worker[];
   /** Stack mappings glibc has made, and the ones it keeps for new threads (newest first). */
@@ -94,18 +126,22 @@ export const CORES_CHANGE = {
   stdin: "stdin",
 } as const;
 
-/** Change keys for one thread, and for one of glibc's stack mappings. */
+/** Change keys for one thread, one of glibc's stack mappings, one core, and one element of slices[] or ids[]. */
 export const threadKey = (n: number) => `thread:${n}`;
 export const stackKey = (index: number) => `stack:${index}`;
+export const coreKey = (core: number) => `core:${core}`;
+export const sliceKey = (t: number) => `slices:${t}`;
+export const idKey = (t: number) => `ids:${t}`;
 
 export const LINE_SIZE = 16;
 export const CORE_COUNT = 4;
 
+/** The program as bash is about to start it: no process yet, so no memory either. */
 export function startCores(run: number): CoresState {
   return {
     kind: "cores",
     run,
-    stage: "running",
+    stage: "starting",
     at: 0,
     inMain: false,
     line: Array.from({ length: LINE_SIZE }, () => null),
@@ -114,6 +150,9 @@ export function startCores(run: number): CoresState {
     threads: null,
     per: null,
     total: null,
+    slices: Array.from({ length: MAX_THREADS }, () => null),
+    ids: Array.from({ length: MAX_THREADS }, () => null),
+    stale: [],
     workers: [],
     stacks: 0,
     cache: [],
@@ -146,11 +185,20 @@ export function sliceOf(t: number, threads: number): { first: number; count: num
   return { first: t * per, count: t === threads - 1 ? MARKS - t * per : per };
 }
 
-/** sscanf(line, "%d", &threads) then the range check: the number, or null to ask again. */
-export function parseThreads(text: string): number | null {
+/**
+ * sscanf(line, "%d", &threads) on what you typed: what it returns (1, 0 when
+ * the line starts with something else, -1 when it holds only white space),
+ * and what it stores in threads, if anything.
+ */
+export function scanThreads(text: string): { result: number; threads: number | null } {
   const { result, values } = scanInts(bytesOf(`${text}\n`), 1);
-  const n = values[0];
-  return result === 1 && n !== undefined && n >= 0 && n <= MAX_THREADS ? n : null;
+  return { result, threads: result === 1 ? (values[0] ?? null) : null };
+}
+
+/** sscanf() then the range check: the number of threads, or null to ask again. */
+export function parseThreads(text: string): number | null {
+  const n = scanThreads(text).threads;
+  return n !== null && n >= 0 && n <= MAX_THREADS ? n : null;
 }
 
 /** The longest line the lab lets you type: fgets(line, 16, stdin) reads it whole, with its newline. */
@@ -195,6 +243,15 @@ export function mainSleeps(cores: CoreUse[]): CoreUse[] {
 /** main() goes to sleep, remembering the core it was on. */
 export function sleepMain(state: CoresState): Pick<CoresState, "cores" | "mainLast"> {
   return { cores: mainSleeps(state.cores), mainLast: mainCore(state) ?? state.mainLast };
+}
+
+/** The change keys for the cores whose occupant changes, and for the panel that shows them. */
+export function coreChanges(before: CoreUse[], after: CoreUse[]): string[] {
+  const keys = after.flatMap((c, i) => {
+    const was = before[i];
+    return was && was.running === c.running && was.queued === c.queued ? [] : [coreKey(i)];
+  });
+  return keys.length > 0 ? [CORES_CHANGE.cores, ...keys] : [];
 }
 
 /** A thread exits: its core is free. */

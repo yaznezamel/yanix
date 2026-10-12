@@ -96,7 +96,11 @@ export interface Tracer<S extends Program> {
   add(step: Step, patch?: Partial<S>, changed?: string[]): void;
 }
 
-export function tracer<S extends Program>(start: S): Tracer<S> {
+/**
+ * `derive` adds change keys that follow from the state itself, whichever
+ * step made the change: for ./cores, the cores whose occupant changed.
+ */
+export function tracer<S extends Program>(start: S, derive?: (before: S, after: S) => string[]): Tracer<S> {
   let state = start;
   const steps: Step[] = [];
   return {
@@ -105,7 +109,9 @@ export function tracer<S extends Program>(start: S): Tracer<S> {
     },
     steps,
     add(step, patch = {}, changed = []) {
-      state = { ...state, ...patch, changed };
+      const next = { ...state, ...patch };
+      const more = derive ? derive(state, next).filter((key) => !changed.includes(key)) : [];
+      state = { ...next, changed: [...changed, ...more] };
       steps.push({ ...step, ui: { ...step.ui, program: state } });
     },
   };
@@ -146,15 +152,18 @@ export function startSteps<S extends Program>(t: Tracer<S>, o: StartOptions): vo
     code: [CODE.ptyWrite, { project: "linux", path: "drivers/tty/tty_io.c" }],
     timescale: "us",
   });
-  t.add({
-    id: "fork-exec",
-    phase: "launch",
-    path: ["bash", "syscall", "proc", PROGRAM],
-    title: `bash starts ${o.command}`,
-    body: `The command has a slash in it, so bash runs that file rather than searching PATH: it creates a child with clone(), and the child calls execve("${o.command}"). ${o.name} inherits bash's open files, so its standard input, output and error (0, 1 and 2) are the same pseudo-terminal.`,
-    code: [CODE.clone, CODE.execve],
-    timescale: "us",
-  });
+  t.add(
+    {
+      id: "fork-exec",
+      phase: "launch",
+      path: ["bash", "syscall", "proc", PROGRAM],
+      title: `bash starts ${o.command}`,
+      body: `The command has a slash in it, so bash runs that file rather than searching PATH: it creates a child with clone(), and the child calls execve("${o.command}"). ${o.name} inherits bash's open files, so its standard input, output and error (0, 1 and 2) are the same pseudo-terminal.`,
+      code: [CODE.clone, CODE.execve],
+      timescale: "us",
+    },
+    shared({ stage: "running" }),
+  );
   t.add({
     id: "exec-map",
     phase: "memory",

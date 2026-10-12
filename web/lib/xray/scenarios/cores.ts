@@ -6,6 +6,7 @@ import {
   CORES_MAIN,
   DESCRIPTOR,
   MARKS,
+  MAX_THREADS,
   STACK_MAP,
   arrayMapping,
   coresLayoutOf,
@@ -16,11 +17,15 @@ import {
   CORES_CHANGE,
   PROMPT,
   averageLine,
+  coreChanges,
+  idKey,
   mainCore,
   mainWakes,
   parseThreads,
   placeThread,
+  scanThreads,
   sleepMain,
+  sliceKey,
   sliceOf,
   stackKey,
   startCores,
@@ -30,6 +35,7 @@ import {
   threadKey,
   threadLine,
   type CoresState,
+  type SliceValue,
   type Worker,
 } from "../cores/program";
 import { initTcache, malloc } from "../marks/heap";
@@ -102,6 +108,7 @@ const T = {
   futexWait: { project: "linux", path: "kernel/futex/waitwake.c", symbol: "futex_wait" },
   futexWake: { project: "linux", path: "kernel/futex/waitwake.c", symbol: "futex_wake" },
   mmRelease: { project: "linux", path: "kernel/fork.c", symbol: "mm_release" },
+  wakeIdle: { project: "linux", path: "kernel/sched/fair.c", symbol: "select_idle_sibling" },
   dontneed: { project: "linux", path: "mm/madvise.c", symbol: "madvise_dontneed_single_vma" },
   munmap: { project: "linux", path: "mm/mmap.c", symbol: "munmap" },
 } satisfies Record<string, CodeRef>;
@@ -116,6 +123,22 @@ function stdinOf(t: Tracer<CoresState>, layout: CoresLayout): string {
   const chunk = t.state.heap.chunks.find((c) => c.tag === "stdin");
   return chunk ? hex(layout.heap + userOf(chunk.at)) : "stdin's buffer";
 }
+
+/** slices[t] as main() assigns it: sum and cpu are 0, since C zeroes what a compound literal leaves out. */
+const sliceFor = (w: Worker): SliceValue => ({ first: w.first, count: w.count, sum: 0, cpu: 0 });
+const setAt = <T>(list: T[], index: number, value: T): T[] => list.map((v, i) => (i === index ? value : v));
+
+/** A new round: what main()'s loop wrote in earlier rounds is still on the stack, until this round writes it. */
+function leftOver(state: CoresState): string[] {
+  return [
+    ...(state.total !== null ? [CORES_CHANGE.total] : []),
+    ...state.slices.flatMap((slice, t) => (slice ? [sliceKey(t)] : [])),
+    ...state.ids.flatMap((id, t) => (id ? [idKey(t)] : [])),
+  ];
+}
+
+/** The loop variables still left over once `keys` are written. */
+const writing = (state: CoresState, keys: string[]) => state.stale.filter((key) => !keys.includes(key));
 
 /** The units of the cores that run a step's code: they load, add and keep a sum each. */
 function workingUnits(cores: number[]): string[] {
@@ -225,6 +248,7 @@ function runSteps(t: Tracer<CoresState>, layout: CoresLayout): void {
 
 function roundSteps(t: Tracer<CoresState>, layout: CoresLayout, typed: string, threads: number): void {
   const per = Math.floor(MARKS / threads);
+  const stale = leftOver(t.state);
   t.add(
     {
       id: "sscanf",
@@ -232,18 +256,21 @@ function roundSteps(t: Tracer<CoresState>, layout: CoresLayout, typed: string, t
       path: ["glibc", PROGRAM],
       parts: MEMORY,
       title: `${threads} thread${threads === 1 ? "" : "s"}`,
-      body: `fgets() copies your line into line[16], and sscanf() reads the number: threads = ${threads}. Each thread gets per = 1000000 / ${threads} = ${per} marks${MARKS % threads === 0 ? "" : ", and the last one also what is left over"}. main() fills in slices[t] for each: where the array is, where its part starts, how many marks.`,
+      body: `fgets() copies your line into line[16], and sscanf() reads the number: threads = ${threads}. Each thread gets per = 1000000 / ${threads} = ${per} marks${MARKS % threads === 0 ? "" : ", and the last one also what is left over"}.${
+        stale.length > 0 ? " ids[], slices[] and total still hold what the last round left in them: nothing clears a local variable." : ""
+      }`,
       code: [CODE.fgets, CODE.sscanf],
       timescale: "ns",
     },
-    { line: fgetsInto(t.state.line, typed), threads, per, total: null, workers: [], at: LINE.per },
-    [CORES_CHANGE.line, CORES_CHANGE.threads, CORES_CHANGE.per, CORES_CHANGE.slices],
+    { line: fgetsInto(t.state.line, typed), threads, per, workers: [], stale, at: LINE.per },
+    [CORES_CHANGE.line, CORES_CHANGE.threads, CORES_CHANGE.per],
   );
 
-  // Thread 1, in full: its stack, then clone3() and a core.
+  // Thread 1, in full: its slice, its stack, then clone3() and a core.
   const firstStack = takeStack(t.state);
   const mapping = stackMapping(layout, firstStack.stack);
   const first = createWorker(1, threads, firstStack.stack);
+  const fill = `main() fills in slices[0] for thread 1: the array, where its part starts and how many marks (${first.count}), with sum and cpu at 0, since C zeroes the members a compound literal leaves out. Then pthread_create() needs a stack for the new thread.`;
   t.add(
     {
       id: "stack-1",
@@ -260,13 +287,21 @@ function roundSteps(t: Tracer<CoresState>, layout: CoresLayout, typed: string, t
           ],
       title: firstStack.reused ? "pthread_create(): a stack from the cache" : "pthread_create(): a stack for thread 1",
       body: firstStack.reused
-        ? `pthread_create() needs a stack for the new thread. glibc kept the stacks of the threads that finished last round, after giving their RAM back: allocate_stack() takes the newest one from its cache. No mmap() this time. pthread_t, the value stored in ids[0], is the address of the thread's descriptor at the top of that stack: ${hex(mapping.top - DESCRIPTOR)}.`
-        : `pthread_create() first needs a stack for the new thread. allocate_stack() asks the kernel for 8 MiB and 4 KiB with mmap(), with no access at all, then mprotect() makes all but the lowest page readable and writable. That page stays a guard: a thread that runs off the end of its stack hits it and crashes, instead of silently overwriting its neighbour. glibc puts the thread's descriptor at the top of the stack; pthread_t, the value stored in ids[0], is its address: ${hex(mapping.top - DESCRIPTOR)}.`,
+        ? `${fill} glibc kept the stacks of the threads that finished last round, after giving their RAM back: allocate_stack() takes the newest one from its cache. No mmap() this time. The thread's descriptor sits at the top of that stack, and its address goes into ids[0]: that is the pthread_t, ${hex(mapping.top - DESCRIPTOR)}.`
+        : `${fill} allocate_stack() asks the kernel for 8 MiB and 4 KiB with mmap(), with no access at all, then mprotect() makes all but the lowest page readable and writable. That page stays a guard: a thread that runs off the end of its stack hits it and crashes, instead of silently overwriting its neighbour. glibc puts the thread's descriptor at the top of the stack and its address into ids[0]: that is the pthread_t, ${hex(mapping.top - DESCRIPTOR)}.`,
       code: firstStack.reused ? [T.create, T.cachedStack] : [T.create, T.allocateStack, T.mmap, T.mprotect],
       timescale: "us",
     },
-    { stacks: firstStack.stacks, cache: firstStack.cache, at: LINE.create },
-    [stackKey(firstStack.stack), CORES_CHANGE.ids],
+    {
+      slices: setAt(t.state.slices, 0, sliceFor(first)),
+      ids: setAt(t.state.ids, 0, { thread: 1, stack: firstStack.stack }),
+      stale: writing(t.state, [sliceKey(0), idKey(0)]),
+      workers: [{ ...first, state: "new" }],
+      stacks: firstStack.stacks,
+      cache: firstStack.cache,
+      at: LINE.create,
+    },
+    [sliceKey(0), stackKey(firstStack.stack), idKey(0), threadKey(1)],
   );
   const main = mainCore(t.state) ?? 0;
   const placed = placeThread(t.state.cores, 1);
@@ -290,14 +325,16 @@ function roundSteps(t: Tracer<CoresState>, layout: CoresLayout, typed: string, t
       timescale: "us",
     },
     { cores: placed.cores, workers: [{ ...first, core: placed.core, state: "running" }] },
-    [threadKey(1), CORES_CHANGE.cores],
+    [threadKey(1)],
   );
 
   // The other threads, together.
   if (threads > 1) {
-    const changed: string[] = [CORES_CHANGE.cores, CORES_CHANGE.ids];
+    const changed: string[] = [];
     let cores = t.state.cores;
     let stacks = { stacks: t.state.stacks, cache: t.state.cache };
+    let slices = t.state.slices;
+    let ids = t.state.ids;
     const workers: Worker[] = [...t.state.workers];
     const reused: number[] = [];
     for (let n = 2; n <= threads; n++) {
@@ -307,8 +344,10 @@ function roundSteps(t: Tracer<CoresState>, layout: CoresLayout, typed: string, t
       const worker = createWorker(n, threads, stack.stack);
       const place = placeThread(cores, n);
       cores = place.cores;
+      slices = setAt(slices, n - 1, sliceFor(worker));
+      ids = setAt(ids, n - 1, { thread: n, stack: stack.stack });
       workers.push({ ...worker, core: place.core, state: place.queued ? "queued" : "running", late: place.queued });
-      changed.push(threadKey(n), stackKey(stack.stack));
+      changed.push(sliceKey(n - 1), idKey(n - 1), threadKey(n), stackKey(stack.stack));
     }
     const running = workers.filter((w) => w.n > 1 && w.state === "running");
     const waiting = workers.filter((w) => w.state === "queued");
@@ -322,7 +361,7 @@ function roundSteps(t: Tracer<CoresState>, layout: CoresLayout, typed: string, t
         cores: [main, ...running.map((w) => w.core)],
         title: threads === 2 ? "Thread 2" : `Threads 2 to ${threads}`,
         body: `The loop goes round again for ${others}: ${
-          threads === 2 ? `a stack${fromCache} and a clone3()` : `a stack each${fromCache}, and a clone3() each`
+          threads === 2 ? `slices[1], a stack${fromCache} and a clone3()` : `a slice each in slices[], a stack each${fromCache}, and a clone3() each`
         }. ${running.map((w, i) => `${i === 0 ? "Thread" : "thread"} ${w.n} gets core ${w.core}`).join(", ")}.${
           waiting.length > 0
             ? ` Thread ${waiting[0]!.n} finds every core busy, main() included, so the scheduler puts it in the run queue of core ${waiting[0]!.core}: it waits its turn.`
@@ -331,7 +370,16 @@ function roundSteps(t: Tracer<CoresState>, layout: CoresLayout, typed: string, t
         code: [T.create, T.cloneInternal, T.newTask, T.placeTask],
         timescale: "us",
       },
-      { cores, workers, stacks: stacks.stacks, cache: stacks.cache, at: LINE.create },
+      {
+        cores,
+        workers,
+        slices,
+        ids,
+        stale: writing(t.state, changed),
+        stacks: stacks.stacks,
+        cache: stacks.cache,
+        at: LINE.create,
+      },
       changed,
     );
   }
@@ -352,7 +400,7 @@ function roundSteps(t: Tracer<CoresState>, layout: CoresLayout, typed: string, t
         ])),
       ],
       title: "pthread_join(): main() sleeps",
-      body: `main() calls pthread_join(ids[0]). Thread 1 is still adding, so glibc waits on a futex: a word in thread 1's descriptor that holds its thread ID until it exits. futex() puts main() to sleep in the kernel${
+      body: `With every thread started, main() sets total to 0 and calls pthread_join(ids[0]). Thread 1 is still adding, so glibc waits on a futex: a word in thread 1's descriptor that holds its thread ID until it exits. futex() puts main() to sleep in the kernel${
         takeover ? `, and core ${main} is free for thread ${takeover.n}, which was waiting in its run queue.` : `, and core ${main} has nothing of ours to run.`
       }`,
       code: [T.join, T.futexWait],
@@ -360,10 +408,12 @@ function roundSteps(t: Tracer<CoresState>, layout: CoresLayout, typed: string, t
     },
     {
       ...sleeping,
+      total: 0,
+      stale: writing(t.state, [CORES_CHANGE.total]),
       workers: t.state.workers.map((w) => (w.state === "queued" ? { ...w, state: "running" } : w)),
       at: LINE.join,
     },
-    [CORES_CHANGE.cores, ...(takeover ? [threadKey(takeover.n)] : [])],
+    [CORES_CHANGE.total, ...(takeover ? [threadKey(takeover.n)] : [])],
   );
 
   // Everyone adds at once.
@@ -397,6 +447,8 @@ function roundSteps(t: Tracer<CoresState>, layout: CoresLayout, typed: string, t
     for (const w of early) cores = threadExits(cores, w.n);
     const done = early.map((w) => ({ ...w, state: "joined" as const, sum: sumOf(w.first, w.count) }));
     const workers = t.state.workers.map((w) => done.find((d) => d.n === w.n) ?? w);
+    let slices = t.state.slices;
+    for (const w of done) slices = setAt(slices, w.n - 1, { ...(slices[w.n - 1] ?? sliceFor(w)), sum: w.sum, cpu: w.core });
     const names = early.length === 1 ? `Thread ${early[0]!.n}` : `Threads ${early.map((w) => w.n).join(" and ")}`;
     t.add(
       {
@@ -412,11 +464,12 @@ function roundSteps(t: Tracer<CoresState>, layout: CoresLayout, typed: string, t
       {
         cores,
         workers,
-        total: (t.state.total ?? 0) + done.reduce((a, w) => a + (w.sum ?? 0), 0),
+        slices,
+        total: (t.state.total ?? 0) + done.reduce((a, w) => a + w.sum, 0),
         cache: [...done.map((w) => w.stack).reverse(), ...t.state.cache],
         at: LINE.join,
       },
-      [CORES_CHANGE.cores, CORES_CHANGE.total, CORES_CHANGE.slices, ...done.map((w) => threadKey(w.n))],
+      [CORES_CHANGE.total, ...done.flatMap((w) => [sliceKey(w.n - 1), threadKey(w.n)])],
     );
     printLines(t, "print-rest", done.map(threadLine), LINE.printThread, early.length === 1 ? `printf(): thread ${early[0]!.n}'s line` : "printf(): their lines", "One printf() each, and each ends with a newline, so each is written at once: one write() per line.");
   }
@@ -434,7 +487,6 @@ function roundSteps(t: Tracer<CoresState>, layout: CoresLayout, typed: string, t
         timescale: "us",
       },
       { ...sleepMain(t.state), at: LINE.join },
-      [CORES_CHANGE.cores],
     );
     finishSteps(t, layout, last.n, false);
   }
@@ -457,6 +509,7 @@ function finishSteps(t: Tracer<CoresState>, layout: CoresLayout, n: number, firs
   const mapping = stackMapping(layout, worker.stack);
   const exited = threadExits(t.state.cores, n);
   const woke = mainWakes(exited, t.state.mainLast);
+  const slice = t.state.slices[n - 1] ?? sliceFor(worker);
   t.add(
     {
       id: `exit-${n}`,
@@ -475,17 +528,18 @@ function finishSteps(t: Tracer<CoresState>, layout: CoresLayout, n: number, firs
         firstToFinish
           ? `add_up() writes its sum, ${sum}, and the core it is on into slices[0]: into main()'s stack. One thread writing to another's stack is fine here, because the memory is shared and main() reads it only after the join.`
           : `Thread ${n} finishes last, on core ${worker.core}, and writes its sum into slices[${n - 1}].`
-      } start_thread() gives back the RAM of the stack it no longer needs with madvise(), and calls exit(), which ends this thread only. As clone3() asked, the kernel zeroes the thread-ID word and wakes the futex: main() wakes up, on core ${woke.core}.`,
-      code: [T.getcpu, T.adviseStack, T.dontneed, T.mmRelease, T.futexWake],
+      } start_thread() gives back the RAM of the stack it no longer needs with madvise(), and calls exit(), which ends this thread only. As clone3() asked, the kernel zeroes the thread-ID word and wakes the futex: main() wakes up, and the scheduler picks it a core, preferring an idle one near where it last ran: core ${woke.core}.`,
+      code: [T.getcpu, T.adviseStack, T.dontneed, T.mmRelease, T.futexWake, T.wakeIdle],
       timescale: "us",
     },
     {
       cores: woke.cores,
       mainLast: woke.core,
       workers: t.state.workers.map((w) => (w.n === n ? { ...w, state: "done", sum } : w)),
+      slices: setAt(t.state.slices, n - 1, { ...slice, sum, cpu: worker.core }),
       at: LINE.store,
     },
-    [threadKey(n), CORES_CHANGE.cores, CORES_CHANGE.slices, stackKey(worker.stack)],
+    [threadKey(n), sliceKey(n - 1), stackKey(worker.stack)],
   );
   const joined = t.state.workers.map((w) => (w.n === n ? { ...w, state: "joined" as const } : w));
   t.add(
@@ -514,19 +568,25 @@ function finishSteps(t: Tracer<CoresState>, layout: CoresLayout, n: number, firs
 // ---------------------------------------------------------------- other answers
 
 function rejectSteps(t: Tracer<CoresState>, layout: CoresLayout, typed: string): void {
+  const { result, threads } = scanThreads(typed);
   t.add(
     {
       id: "sscanf",
       phase: "app",
       path: ["glibc", PROGRAM],
       parts: MEMORY,
-      title: "Not a number from 0 to 4",
-      body: "fgets() copies your line into line[16], but sscanf() finds no number at the start of it, or a number outside 0 to 4. continue skips the rest of the loop, back to its top: the question again.",
+      title: threads === null ? "Not a number" : `${threads}: not from 0 to ${MAX_THREADS}`,
+      body:
+        threads === null
+          ? `fgets() copies your line into line[16], but sscanf() finds no number at its start: it returns ${
+              result < 0 ? "EOF (-1), since the line holds nothing but white space," : "0"
+            } and leaves threads as it was. continue skips the rest of the loop, back to its top: the question again.`
+          : `fgets() copies your line into line[16], and sscanf() stores ${threads} in threads. That is not from 0 to ${MAX_THREADS}, so continue skips the rest of the loop, back to its top: the question again.`,
       code: [CODE.fgets, CODE.sscanf],
       timescale: "ns",
     },
-    { line: fgetsInto(t.state.line, typed), at: LINE.sscanf },
-    [CORES_CHANGE.line],
+    { line: fgetsInto(t.state.line, typed), ...(threads === null ? {} : { threads }), at: LINE.sscanf },
+    threads === null ? [CORES_CHANGE.line] : [CORES_CHANGE.line, CORES_CHANGE.threads],
   );
   promptStep(t, "printf-again", PROMPT, LINE.prompt, "The question again, into stdout's buffer.");
   waitSteps(t, LINE.fgets, "threads", "fgets() asks for a new line.", stdinOf(t, layout), sleepMain(t.state));
@@ -572,17 +632,20 @@ function stopSteps(t: Tracer<CoresState>, layout: CoresLayout, typed: string): v
 
 // ---------------------------------------------------------------- scenarios
 
+/** Every step that moves a thread on or off a core marks that core. */
+const cored = (before: CoresState, after: CoresState) => coreChanges(before.cores, after.cores);
+
 export function runCores(apps: AppState): Scenario {
   const previous = apps.program?.kind === "cores" ? apps.program.run : -1;
   const start = startCores(previous + 1);
-  const t = tracer<CoresState>(start);
+  const t = tracer<CoresState>(start, cored);
   runSteps(t, coresLayoutOf(start.run));
   return { kind: "runProgram", app: "terminal", title: "./cores", focus: "split", steps: t.steps };
 }
 
 export function coresInput(program: CoresState, text: string): Scenario {
   const layout = coresLayoutOf(program.run);
-  const t = tracer<CoresState>({ ...program, changed: [] });
+  const t = tracer<CoresState>({ ...program, changed: [] }, cored);
   const waking = mainWakes(t.state.cores, t.state.mainLast);
   typedSteps(t, text, LINE.fgets, stdinOf(t, layout), { cores: waking.cores, mainLast: waking.core });
   const threads = parseThreads(text);
