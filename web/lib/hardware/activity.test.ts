@@ -38,10 +38,20 @@ describe("hardware activity", () => {
   });
 
   it("uses the parts a step names, while the signal stays at the core", () => {
-    const store: Step = { ...step(["marks"]), parts: ["cpu.core0.l1d", "cpu.core0.regs", "no.such.part"] };
+    const store: Step = { ...step(["program"]), parts: ["cpu.core0.l1d", "cpu.core0.regs", "no.such.part"] };
     const now = activityAt(TREE, store, 0);
     expect(now.current).toEqual(new Set(["cpu", "cpu.core0"]));
     expect(now.touched).toEqual(new Set(["cpu", "cpu.core0", "cpu.core0.l1d", "cpu.core0.regs"]));
+  });
+
+  it("runs a step on the cores it names, each fetching from RAM through the memory controller", () => {
+    const parallel: Step = { ...step(["program", "ram"]), cores: [0, 1, 2, 3] };
+    const now = activityAt(TREE, parallel, 0);
+    expect(now.current).toEqual(new Set(["cpu", "cpu.core0", "cpu.core1", "cpu.core2", "cpu.core3"]));
+    for (const id of ["cpu.interconnect", "cpu.imc", "dimm0", "dimm1"]) expect(now.touched.has(id)).toBe(true);
+    expect(now.links).toEqual(new Set(["computer:channel-a", "computer:channel-b"]));
+    // Without cores, code runs on core 0 alone.
+    expect(activityAt(TREE, step(["program"]), 0).current).toEqual(new Set(["cpu", "cpu.core0"]));
   });
 
   it("sends a disk command from core 0 through the interconnect and the I/O block", () => {

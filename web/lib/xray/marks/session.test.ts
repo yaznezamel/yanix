@@ -3,6 +3,12 @@ import { INITIAL_APPS } from "../apps";
 import { INITIAL_PLAYER, currentApps, playerReducer, type PlayerState } from "../engine";
 import { NODE_IDS } from "../nodes";
 import type { AppState, Scenario, ScenarioRequest } from "../types";
+
+/** The program in the terminal, which these tests expect to be ./marks. */
+function marksOf(apps: AppState): ProgramState {
+  if (apps.program?.kind !== "marks") throw new Error("./marks is not running");
+  return apps.program;
+}
 import { chunkSize, MIN_CHUNK, TCACHE_COUNT, topSize } from "./heap";
 import { STUDENT_SIZE } from "./layout";
 import { bytesOf, fitInput, userOf, type ProgramState } from "./program";
@@ -22,7 +28,7 @@ function session(lines: string[]): { states: PlayerState[]; scenarios: Scenario[
   let state: PlayerState = { ...INITIAL_PLAYER, apps: withTerminal };
   const states: PlayerState[] = [];
   const scenarios: Scenario[] = [];
-  state = play(state, { kind: "runProgram" });
+  state = play(state, { kind: "runProgram", program: "marks" });
   states.push(state);
   scenarios.push(state.run!.scenario);
   for (const text of lines) {
@@ -35,7 +41,7 @@ function session(lines: string[]): { states: PlayerState[]; scenarios: Scenario[
 
 const INPUT = ["Yazn", "72 85 90", "y", "Sam", "60 70 80", "y", "Lee", "50 abc", "50 60 70", "n"];
 const { states, scenarios } = session(INPUT);
-const program = (i: number) => currentApps(states[i]!).program!;
+const program = (i: number) => marksOf(currentApps(states[i]!));
 const terminal = (i: number) => currentApps(states[i]!).terminal;
 const lastLine = (i: number) => terminal(i).lines.at(-1);
 const layout = (i: number) => program(i).heap.chunks.map((c) => `${c.at.toString(16)}:${c.size.toString(16)}`);
@@ -120,8 +126,8 @@ describe("a session with ./marks", () => {
   });
 
   it("gives the next run other addresses, and a fresh heap", () => {
-    const again = play(states.at(-1)!, { kind: "runProgram" });
-    const p = currentApps(again).program!;
+    const again = play(states.at(-1)!, { kind: "runProgram", program: "marks" });
+    const p = marksOf(currentApps(again));
     expect(p.run).toBe(1);
     expect(p.stage).toBe("name");
     expect(p.list).toEqual([]);
@@ -177,7 +183,7 @@ describe("long sessions", () => {
     const pick = <T,>(items: T[]) => items[Math.floor(next() * items.length)]!;
     const letters = "abcdefghijklmnopqrstuvwxyz ÄéøЖ漢";
     let state: PlayerState = { ...INITIAL_PLAYER, apps: withTerminal };
-    state = play(state, { kind: "runProgram" });
+    state = play(state, { kind: "runProgram", program: "marks" });
     const students = 10 + Math.floor(next() * 40);
     let lines = 0;
     for (let n = 0; n < students; n++) {
@@ -188,13 +194,13 @@ describe("long sessions", () => {
         state = play(state, { kind: "programInput", text: pick(["", "abc", "101 1 1", "-1 2 3", "1 2", "12.5 1 1"]) });
       }
       state = play(state, { kind: "programInput", text: `${Math.floor(next() * 101)} ${Math.floor(next() * 101)} 7` });
-      const p = currentApps(state).program!;
+      const p = marksOf(currentApps(state));
       expect(p.count).toBe(n + 1);
       checkHeap(p);
       state = play(state, { kind: "programInput", text: n === students - 1 ? "n" : pick(["y", "Y", "yes"]) });
       lines++;
     }
-    const end = currentApps(state).program!;
+    const end = marksOf(currentApps(state));
     expect(end.stage).toBe("exited");
     checkHeap(end);
     const rows = currentApps(state).terminal.lines.filter((l) => l.kind === "output");

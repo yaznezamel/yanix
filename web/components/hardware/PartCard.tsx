@@ -16,17 +16,17 @@ function statusOf(node: Placed, activity: Activity, running: string | null): { t
   if (lit) {
     // Which parts inside were used, such as the blocks a DMA crosses in the CPU.
     const inside = node.children.filter((c) => activity.touched.has(c.id));
-    const cores = node.children.filter((c) => c.part.runs);
+    const cores = node.children.filter((c) => c.part.kind === "core");
     let text = activity.current.has(node.id) ? "The signal is here now." : "Used in this step.";
     if (inside.length > 0) text += ` Inside: ${inside.map((c) => c.part.label).join(", ")}.`;
     if (cores.length > 0 && !cores.some((c) => activity.touched.has(c.id))) text += " No core runs code for it.";
     return { text, className: activity.current.has(node.id) ? "text-signal" : "text-signal/85" };
   }
-  // The units of the core that runs the step's code are not modelled yet: neither used nor unused.
-  const runner = node.parent?.part.runs && activity.touched.has(node.parent.id) ? node.parent : null;
+  // A unit of a core that runs the step's code, which the step does not single out: neither used nor unused.
+  const runner = node.parent?.part.kind === "core" && activity.touched.has(node.parent.id) ? node.parent : null;
   if (runner) {
     return {
-      text: `${runner.part.label} is running ${running ?? "code"} in this step. Which of its units that uses is not shown yet.`,
+      text: `${runner.part.label} is running ${running ?? "code"} in this step. Its instructions go through units like this one, but the step does not single this one out.`,
       className: "text-lab-ink/80",
     };
   }

@@ -1,11 +1,12 @@
 import { NOTES_FILE } from "../apps";
 import { searchUrl } from "../packets";
-import type { AppState, MachineState, Scenario, ScenarioRequest } from "../types";
+import type { AppState, MachineState, Program, Scenario, ScenarioRequest } from "../types";
 import { copy, paste } from "./clipboard";
 import { openFile, readFile } from "./files";
 import { keystroke } from "./keyboard";
+import { coresInput, runCores } from "./cores";
 import { launch } from "./launch";
-import { programInput, runProgram } from "./marks";
+import { marksInput, runMarks } from "./marks";
 import { play } from "./media";
 import { boot, login, restart, shutdown } from "./power";
 import { webSearch } from "./web";
@@ -44,10 +45,42 @@ export function buildScenario(request: ScenarioRequest, machine: MachineState, a
     case "restart":
       return restart();
     case "runProgram":
-      return runProgram(apps);
+      return request.program === "cores" ? runCores(apps) : runMarks(apps);
     case "programInput":
       return programInput(apps, request.text);
   }
+}
+
+/** Is the C program in the terminal blocked in fgets(), waiting for a line? */
+export function programReads(program: Program | null): boolean {
+  if (!program) return false;
+  return program.kind === "marks"
+    ? program.stage === "name" || program.stage === "marks" || program.stage === "again"
+    : program.stage === "threads";
+}
+
+/** A line typed into the terminal while a C program reads it. */
+function programInput(apps: AppState, text: string): Scenario {
+  const program = apps.program;
+  if (program && programReads(program)) {
+    return program.kind === "marks" ? marksInput(program, text) : coresInput(program, text);
+  }
+  return {
+    kind: "programInput",
+    app: "terminal",
+    title: "Nothing is reading",
+    focus: "split",
+    steps: [
+      {
+        id: "nobody",
+        phase: "input",
+        path: ["terminal", "syscall", "tty"],
+        title: "Nothing is reading",
+        body: "No program is waiting for this line, so it waits in the TTY's buffer.",
+        ui: { terminalBusy: false },
+      },
+    ],
+  };
 }
 
 /** What the machine remembers once the scenario has run: everything its steps learned. */
@@ -89,7 +122,7 @@ export function applyTrigger(request: ScenarioRequest, apps: AppState): AppState
     case "runProgram":
       return {
         ...apps,
-        terminal: { lines: [...apps.terminal.lines, { kind: "prompt", text: "./marks" }], busy: true },
+        terminal: { lines: [...apps.terminal.lines, { kind: "prompt", text: `./${request.program}` }], busy: true },
       };
     case "programInput": {
       // The TTY echoes what you type as you type it: it is on screen before the program reads it.

@@ -107,7 +107,10 @@ function core(i: number): Part {
     inner: { w: 1000, h: 1300 },
     // A real scheduler spreads work over all cores; this model runs every trace on core 0.
     ...(i === 0
-      ? { about: `${about} In this model, every trace runs on core 0.`, runs: ["user", "kernel"] as ("user" | "kernel")[] }
+      ? {
+          about: `${about} In this model, every trace runs on core 0, except the threads of ./cores, which the scheduler spreads over the other cores too.`,
+          runs: ["user", "kernel"] as ("user" | "kernel")[],
+        }
       : { about }),
     children: CORE_UNITS,
   };

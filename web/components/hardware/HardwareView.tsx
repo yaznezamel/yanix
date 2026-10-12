@@ -995,7 +995,7 @@ export function HardwareView({ step, reached, reduced, ref }: HardwareViewProps)
                     .map((q) => q.part.label)
                     .join(" › ")}
                 </button>
-                {running && p.part.runs?.includes(running.layer as "user" | "kernel") && (
+                {running && p.part.kind === "core" && (
                   <span className="text-lab-ink/85">
                     running {running.label} ({LAYER_NAME[running.layer].toLowerCase()})
                   </span>

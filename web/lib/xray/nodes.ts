@@ -90,7 +90,7 @@ const NODE_LIST: MachineNode[] = [
     label: "Terminal",
     sub: "emulator",
     layer: "user",
-    x: 16, y: 106, w: 72, h: 46,
+    x: 16, y: 106, w: 70, h: 46,
     about:
       "A terminal emulator is an ordinary program that stands in for a hardware terminal. It owns one end of a pseudo-terminal; the shell running inside it owns the other end.",
     code: [{ project: "linux", path: "drivers/tty/pty.c" }],
@@ -100,7 +100,7 @@ const NODE_LIST: MachineNode[] = [
     label: "bash",
     sub: "shell",
     layer: "user",
-    x: 96, y: 106, w: 56, h: 46,
+    x: 94, y: 106, w: 52, h: 46,
     about:
       "The shell reads your command line, starts programs with clone() and execve(), and waits for them to finish.",
     code: [{ project: "bash", path: "execute_cmd.c" }],
@@ -110,7 +110,7 @@ const NODE_LIST: MachineNode[] = [
     label: "cat",
     sub: "coreutils",
     layer: "user",
-    x: 160, y: 106, w: 64, h: 46,
+    x: 154, y: 106, w: 64, h: 46,
     about:
       "cat opens a file, read()s it into a buffer and write()s the bytes to its standard output, which here is the terminal.",
     code: [{ project: "coreutils", path: "src/cat.c" }],
@@ -120,7 +120,7 @@ const NODE_LIST: MachineNode[] = [
     label: "Text editor",
     sub: "GTK app",
     layer: "user",
-    x: 232, y: 106, w: 86, h: 46,
+    x: 226, y: 106, w: 84, h: 46,
     about:
       "A GTK text editor. Like every graphical app on Wayland it talks to the compositor over a Unix socket: it receives key and pointer events, offers and receives clipboard data, and hands over finished frames.",
     code: [
@@ -133,7 +133,7 @@ const NODE_LIST: MachineNode[] = [
     label: "PipeWire",
     sub: "audio server",
     layer: "user",
-    x: 326, y: 106, w: 88, h: 46,
+    x: 318, y: 106, w: 86, h: 46,
     about:
       "PipeWire routes and mixes audio between apps and devices. Its real-time data thread wakes on a timer once per quantum, mixes every stream and writes the result into the sound card's buffer before the hardware needs it.",
     code: [
@@ -146,7 +146,7 @@ const NODE_LIST: MachineNode[] = [
     label: "Network service",
     sub: "HTTP · TLS",
     layer: "user",
-    x: 422, y: 106, w: 108, h: 46,
+    x: 412, y: 106, w: 104, h: 46,
     about:
       "Chromium's network service makes every network request: it resolves names, opens TCP connections, runs TLS with BoringSSL and speaks HTTP. On desktop Linux it runs in its own process.",
     code: [
@@ -159,7 +159,7 @@ const NODE_LIST: MachineNode[] = [
     label: "glibc",
     sub: "C library",
     layer: "user",
-    x: 538, y: 106, w: 96, h: 46,
+    x: 524, y: 106, w: 90, h: 46,
     about:
       "The GNU C library is loaded into almost every process. Its dynamic linker, ld.so, maps a program's shared libraries when it starts. It implements printf() and fgets() with buffers of its own, and malloc() and free() by carving the heap into chunks, asking the kernel for more with brk() or mmap() only now and then. Its resolver implements getaddrinfo(): it follows /etc/nsswitch.conf, checks /etc/hosts and sends DNS queries over UDP. Chromium can also use its own DNS client; both send the same kind of packet.",
     code: [
@@ -170,13 +170,13 @@ const NODE_LIST: MachineNode[] = [
     ],
   },
   {
-    id: "marks",
-    label: "marks",
-    sub: "C program",
+    id: "program",
+    label: "C program",
+    sub: "marks · cores",
     layer: "user",
-    x: 642, y: 106, w: 66, h: 46,
+    x: 622, y: 106, w: 86, h: 46,
     about:
-      "examples/marks/marks.c, a small C program you run from the terminal with ./marks. It reads each name into an array on its stack, copies it to the heap with strdup(), and keeps the students in an array on the heap that realloc() grows. The Memory tab shows its stack frames and heap chunks as it runs.",
+      "The small C programs in examples/, which you run from the terminal. ./marks reads each name into an array on its stack, copies it to the heap with strdup(), and keeps the students in an array on the heap that realloc() grows. ./cores adds up a million marks with up to four threads, which the kernel runs on different cores at the same time. The Memory tab shows the one you ran last: its stack frames, heap chunks and threads.",
   },
 
   // Kernel

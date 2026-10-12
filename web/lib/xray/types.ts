@@ -3,7 +3,11 @@
 // data lives in TypeScript for now; it moves to content/*.yaml once the
 // catalog API exists (FR12).
 
+import type { CoresState } from "./cores/program";
 import type { ProgramState } from "./marks/program";
+
+/** The C program running in the terminal: examples/marks or examples/cores. */
+export type Program = ProgramState | CoresState;
 
 export type Layer = "user" | "kernel" | "hardware" | "network";
 
@@ -21,7 +25,7 @@ export type NodeId =
   | "pipewire"
   | "netsvc"
   | "glibc"
-  | "marks"
+  | "program"
   // kernel
   | "syscall"
   | "vfs"
@@ -256,8 +260,8 @@ export interface AppState {
   editor: EditorState;
   player: MediaState;
   clipboard: Clipboard | null;
-  /** The C program running in the terminal (examples/marks/marks.c), or null. */
-  program: ProgramState | null;
+  /** The C program running in the terminal (examples/marks or examples/cores), or null. */
+  program: Program | null;
 }
 
 /** How a step changes what is on screen. */
@@ -279,7 +283,7 @@ export interface UiEffect {
   player?: Partial<MediaState>;
   clipboard?: Clipboard | null;
   /** The program's memory from this step on. */
-  program?: ProgramState | null;
+  program?: Program | null;
 }
 
 export interface Step {
@@ -304,6 +308,11 @@ export interface Step {
    * as "cpu.core0.l1d": the units of the core that runs the step's code.
    */
   parts?: string[];
+  /**
+   * The cores that run the step's code, when they are not just core 0: the
+   * threads of ./cores. Each user or kernel box on the path stands for them.
+   */
+  cores?: number[];
 }
 
 export type ScenarioRequest =
@@ -319,8 +328,8 @@ export type ScenarioRequest =
   | { kind: "login" }
   | { kind: "shutdown" }
   | { kind: "restart" }
-  /** ./marks in the terminal: the C program starts. */
-  | { kind: "runProgram" }
+  /** ./marks or ./cores in the terminal: a C program starts. */
+  | { kind: "runProgram"; program: "marks" | "cores" }
   /** A line typed into the running program. */
   | { kind: "programInput"; text: string };
 

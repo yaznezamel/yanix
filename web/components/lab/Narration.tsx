@@ -6,7 +6,8 @@ import { whereIs } from "@/lib/hardware/activity";
 import { TREE, lineage } from "@/lib/hardware/tree";
 import { NODES } from "@/lib/xray/nodes";
 import type { CodeRef, NodeId, Step } from "@/lib/xray/types";
-import { sourceLine } from "@/lib/xray/marks/source";
+import { CORES_C } from "@/lib/xray/cores/source";
+import { MARKS_C, codeAt } from "@/lib/xray/marks/source";
 import { LAYER_HEX, LAYER_NAME, PHASE_NAME, TIMESCALE } from "./palette";
 
 interface NarrationProps {
@@ -204,7 +205,8 @@ function StepStory({
   const layers = Array.from(new Set(step.path.map((id) => NODES[id].layer)));
   // A step of ./marks: the line of C it is about.
   const program = step.ui?.program;
-  const code = program && program.stage !== "exited" ? sourceLine(program.at) : null;
+  const code = program && program.stage !== "exited" ? codeAt(program.kind === "cores" ? CORES_C : MARKS_C, program.at) : null;
+  const file = program?.kind === "cores" ? "cores.c" : "marks.c";
 
   return (
     <section aria-label="Story" aria-live="polite" className="flex h-full min-h-0 flex-col gap-3 p-4">
@@ -249,13 +251,18 @@ function StepStory({
           </h2>
           {code && (
             <p className="flex min-w-0 items-baseline gap-2 rounded-md border border-lab-line bg-lab-panel2 px-2.5 py-1.5 font-mono text-[12px]">
-              <span className="shrink-0 text-lab-muted">marks.c:{step.ui?.program?.at}</span>
+              <span className="shrink-0 text-lab-muted">
+                {file}:{program?.at}
+              </span>
               <span className="min-w-0 truncate text-lab-ink" title={code}>
                 {code}
               </span>
             </p>
           )}
-          <p className="text-[14px] leading-relaxed text-lab-ink/85">{step.body}</p>
+          {/* No ligatures: C's -> must not turn into an arrow. */}
+          <p className="text-[14px] leading-relaxed text-lab-ink/85 [font-variant-ligatures:none] [font-feature-settings:'calt'_0]">
+            {step.body}
+          </p>
           <div className="flex flex-wrap items-center gap-1.5">
             {layers.map((layer) => (
               <span

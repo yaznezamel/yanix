@@ -1,8 +1,8 @@
 "use client";
 
-import { PROGRAM_ANSWERS, programReads } from "@/components/desktop/TerminalApp";
+import { inputLimit, programAnswers } from "@/components/desktop/TerminalApp";
 import { SUGGESTED_QUERIES } from "@/lib/xray/apps";
-import { MAX_INPUT_BYTES } from "@/lib/xray/marks/program";
+import { programReads } from "@/lib/xray/scenarios";
 import type { AppId, AppState, ScenarioRequest } from "@/lib/xray/types";
 
 // On a phone the simulated screen is too small to tap, so the same actions are
@@ -107,6 +107,11 @@ function actionsFor(apps: AppState, onRequest: (r: ScenarioRequest) => void, onC
     ...(open("terminal")
       ? [
           {
+            label: "Run ./cores",
+            detail: "Threads on every core: stacks, clone3() and the scheduler",
+            run: () => onCommand("./cores"),
+          },
+          {
             label: "Run ./marks",
             detail: "A C program: watch its stack and heap in the Memory tab",
             run: () => onCommand("./marks"),
@@ -187,15 +192,16 @@ function ProgramInput({
   onStarted,
 }: Pick<QuickActionsProps, "apps" | "onCommand" | "onStarted">) {
   const last = apps.terminal.lines.at(-1);
-  const question = last?.kind === "ask" && last.answer === undefined ? last.text.trim() : "marks is reading";
-  const answers = apps.program ? (PROGRAM_ANSWERS[apps.program.stage] ?? []) : [];
+  const name = apps.program?.kind === "cores" ? "cores" : "marks";
+  const question = last?.kind === "ask" && last.answer === undefined ? last.text.trim() : `${name} is reading`;
+  const answers = programAnswers(apps.program);
   function send(text: string) {
     onCommand(text);
     onStarted();
   }
   return (
-    <section aria-label="Answer ./marks" className="rounded-xl border border-lab-line bg-lab-panel p-3 md:hidden">
-      <h2 className="mb-1 font-mono text-[11px] uppercase tracking-[0.14em] text-lab-muted">./marks asks</h2>
+    <section aria-label={`Answer ./${name}`} className="rounded-xl border border-lab-line bg-lab-panel p-3 md:hidden">
+      <h2 className="mb-1 font-mono text-[11px] uppercase tracking-[0.14em] text-lab-muted">./{name} asks</h2>
       <form
         className="flex flex-col gap-2"
         onSubmit={(e) => {
@@ -214,7 +220,7 @@ function ProgramInput({
             name="answer"
             autoComplete="off"
             spellCheck={false}
-            maxLength={MAX_INPUT_BYTES}
+            maxLength={inputLimit(apps.program)}
             className="min-h-11 min-w-0 flex-1 rounded-lg border border-lab-line bg-lab-panel2 px-3 font-mono text-[14px] text-lab-ink outline-none focus:border-signal/60"
           />
           <button

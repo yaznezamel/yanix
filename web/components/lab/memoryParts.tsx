@@ -1,0 +1,204 @@
+"use client";
+
+import { useEffect, useRef } from "react";
+import { cString, textOf } from "@/lib/xray/marks/program";
+
+// Pieces the Memory tab's views share: a panel, a stack frame's rows, the
+// source with the current line, and a strip of bytes. Values the program has
+// not written are shown as "?", and what the current step changed is marked.
+
+export const hex = (n: number) => `0x${n.toString(16)}`;
+const signed = (n: number) => (n < 0 ? `−${hex(-n)}` : `+${hex(n)}`);
+
+export function Unset() {
+  return <span className="text-lab-muted">?</span>;
+}
+
+export function Changed() {
+  return <span className="ml-1.5 font-sans text-[10px] font-medium text-signal">changed</span>;
+}
+
+export function Panel({ title, sub, lit, children }: { title: string; sub: string; lit: boolean; children: React.ReactNode }) {
+  return (
+    <section
+      aria-label={title}
+      className={`rounded-lg border bg-lab-panel2/60 ${lit ? "border-signal/50" : "border-lab-line"}`}
+    >
+      <h3 className="flex flex-wrap items-baseline gap-x-2 border-b border-lab-line px-2.5 py-1.5">
+        <span className={`font-mono text-[11px] uppercase tracking-[0.1em] ${lit ? "text-signal" : "text-lab-muted"}`}>
+          {title}
+        </span>
+        <span className="font-mono text-[10.5px] text-lab-muted">{sub}</span>
+      </h3>
+      {children}
+    </section>
+  );
+}
+
+/** The top of a view: the program, what it is doing, and a word on its addresses. */
+export function ViewHeader({ command, stage, exited, run }: { command: string; stage: string; exited: boolean; run: number }) {
+  return (
+    <>
+      <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1 pb-2">
+        <h2 className="font-mono text-[13px] font-semibold text-lab-ink">{command}</h2>
+        <span
+          className={`rounded px-1.5 py-0.5 font-mono text-[11px] ${exited ? "bg-white/5 text-lab-muted" : "bg-signal/12 text-signal"}`}
+        >
+          {stage}
+        </span>
+        <span className="text-[11.5px] text-lab-muted">
+          Addresses from a real run of the program. ASLR picks new ones every run (this is run {run + 1}).
+        </span>
+      </div>
+      {exited && (
+        <p className="mb-3 rounded-md border border-lab-line bg-lab-panel2 px-3 py-2 text-[12.5px] text-lab-ink/85">
+          The process has exited and the kernel has taken back every page. This is how its memory looked last.
+          Type <span className="font-mono text-signal">{command}</span> in the Terminal to run it again.
+        </p>
+      )}
+    </>
+  );
+}
+
+// ---------------------------------------------------------------- source
+
+/** Lines around the current one that stay bright. */
+const CONTEXT = 4;
+
+export function Source({ name, lines, at }: { name: string; lines: readonly string[]; at: number }) {
+  const boxRef = useRef<HTMLDivElement>(null);
+  const lineRef = useRef<HTMLDivElement>(null);
+
+  // Scroll the box, not the page, so the current line is in the middle.
+  useEffect(() => {
+    const box = boxRef.current;
+    const line = lineRef.current;
+    if (!box || !line) return;
+    box.scrollTop = line.offsetTop - box.clientHeight / 2 + line.clientHeight / 2;
+  }, [at]);
+
+  return (
+    <section aria-label="Source code" className="rounded-lg border border-lab-line bg-lab-panel2/60">
+      <h3 className="flex items-baseline justify-between gap-2 border-b border-lab-line px-2.5 py-1.5 font-mono text-[11px] uppercase tracking-[0.1em] text-lab-muted">
+        {name}
+        <span className="normal-case tracking-normal">{at > 0 ? `line ${at}` : "before main()"}</span>
+      </h3>
+      <div
+        ref={boxRef}
+        className="relative max-h-[10.5rem] overflow-y-auto py-1 font-mono text-[11.5px] leading-[1.6] @5xl:max-h-[20rem]"
+      >
+        {lines.map((text, i) => {
+          const n = i + 1;
+          const current = n === at;
+          return (
+            <div
+              key={n}
+              ref={current ? lineRef : undefined}
+              aria-current={current ? "step" : undefined}
+              className={`flex gap-2 pr-2 whitespace-pre ${
+                current ? "bg-signal/15 text-lab-ink" : Math.abs(n - at) <= CONTEXT ? "text-lab-ink/80" : "text-lab-ink/45"
+              }`}
+            >
+              <span className={`w-8 shrink-0 text-right ${current ? "text-signal" : "text-lab-muted/70"}`}>
+                {current ? "▶" : n}
+              </span>
+              <span>{text.replace(/\t/g, "    ")}</span>
+            </div>
+          );
+        })}
+      </div>
+    </section>
+  );
+}
+
+// ---------------------------------------------------------------- stack frames
+
+export interface Slot {
+  /** The change key that marks this slot as changed. */
+  key?: string;
+  /** Offset from the frame's rbp. */
+  offset: number;
+  name: string;
+  value: React.ReactNode;
+  note?: string;
+}
+
+export function Frame({
+  title,
+  detail,
+  slots,
+  lit,
+  changed,
+}: {
+  title: string;
+  detail: string;
+  slots: Slot[];
+  lit: boolean;
+  changed: Set<string>;
+}) {
+  return (
+    <div className={`border-t border-lab-line first:border-t-0 ${lit ? "bg-signal/[0.06]" : ""}`}>
+      <p className="flex flex-wrap items-baseline gap-x-2 px-2.5 pt-1.5 pb-0.5">
+        <span className={`font-mono text-[12px] font-semibold ${lit ? "text-signal" : "text-lab-ink"}`}>{title}</span>
+        <span className="font-mono text-[10.5px] text-lab-muted">{detail}</span>
+        {lit && <Changed />}
+      </p>
+      <dl className="grid grid-cols-[4.6rem_minmax(0,auto)_minmax(0,1fr)] items-baseline gap-x-2 px-1.5 pb-1.5">
+        {slots.map((slot) => {
+          const hot = slot.key !== undefined && changed.has(slot.key);
+          return (
+            <div
+              key={`${slot.name}-${slot.offset}`}
+              className={`col-span-3 grid grid-cols-subgrid items-baseline rounded px-1 py-[3px] ${hot ? "bg-signal/12 ring-1 ring-signal/50" : ""}`}
+            >
+              <dt className="font-mono text-[10.5px] text-lab-muted" title="Offset from this frame's rbp">
+                rbp{signed(slot.offset)}
+              </dt>
+              <dt className={`font-mono text-[11.5px] ${hot ? "text-signal" : "text-lab-ink/90"}`}>{slot.name}</dt>
+              <dd className="min-w-0 break-words font-mono text-[11.5px] text-lab-ink/90">
+                {slot.value}
+                {slot.note && <span className="text-lab-muted"> {slot.note}</span>}
+                {hot && <Changed />}
+              </dd>
+            </div>
+          );
+        })}
+      </dl>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------- bytes
+
+/** A char array: the string it holds, then its first bytes one by one ('\0' and '\n' marked). */
+export function LineBytes({ bytes, shown = 20 }: { bytes: (number | null)[]; shown?: number }) {
+  const string = textOf(cString(bytes));
+  const written = bytes.some((b) => b !== null);
+  if (!written) return <Unset />;
+  const count = Math.min(shown, bytes.length);
+  return (
+    <span className="inline-flex flex-col gap-1">
+      <span>&quot;{string.replace(/\n/g, "\\n")}&quot;</span>
+      <span className="flex flex-wrap gap-px" aria-label="The first bytes of line">
+        {bytes.slice(0, count).map((b, i) => (
+          <span
+            key={i}
+            title={b === null ? "not written yet" : `line[${i}] = ${hex(b)}`}
+            className={`grid h-[18px] min-w-[18px] place-items-center rounded-[3px] px-0.5 text-[10.5px] ${
+              b === null
+                ? "bg-white/[0.03] text-lab-muted/60"
+                : b === 0
+                  ? "bg-[#ffb35c]/15 text-[#ffb35c]"
+                  : b === 0x0a
+                    ? "bg-[#c0a6ff]/15 text-[#c0a6ff]"
+                    : "bg-white/[0.07] text-lab-ink"
+            }`}
+          >
+            {b === null ? "·" : b === 0 ? "\\0" : b === 0x0a ? "\\n" : b === 0x20 ? "␣" : b > 0x20 && b < 0x7f ? String.fromCharCode(b) : "•"}
+          </span>
+        ))}
+        {bytes.length > count && <span className="self-center text-[10px] text-lab-muted">…{bytes.length - count} more</span>}
+      </span>
+    </span>
+  );
+}

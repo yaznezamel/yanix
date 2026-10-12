@@ -122,10 +122,13 @@ export function activityAt(tree: Tree, step: Step | null, reached: number): Acti
   const path = step.path;
   const at = Math.min(Math.max(0, reached), path.length - 1);
   const found = new Map<NodeId, Placed[]>();
+  // Code runs on core 0, unless the step says which cores run it (a program's threads).
+  const cores = step.cores?.map((n) => tree.byId.get(`cpu.core${n}`)).filter((p): p is Placed => p !== undefined);
   const of = (node: NodeId) => {
     let parts = found.get(node);
     if (!parts) {
-      parts = partsFor(tree, node);
+      const layer = NODES[node].layer;
+      parts = cores && cores.length > 0 && (layer === "user" || layer === "kernel") ? cores : partsFor(tree, node);
       found.set(node, parts);
     }
     return parts;

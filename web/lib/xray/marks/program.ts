@@ -23,6 +23,7 @@ export interface Student {
 }
 
 export interface ProgramState {
+  kind: "marks";
   /** Which run of ./marks this is: each picks other addresses (ASLR). */
   run: number;
   stage: Stage;
@@ -91,6 +92,7 @@ export const LINE_SIZE = 64;
 /** The program just after execve(): no main() yet, no heap. */
 export function startProgram(run: number): ProgramState {
   return {
+    kind: "marks",
     run,
     stage: "running",
     at: 0,
@@ -154,11 +156,11 @@ export function strcspnNewline(line: (number | null)[]): number {
 /** The longest line the lab lets you type: fgets() then reads it, newline and all, in one go. */
 export const MAX_INPUT_BYTES = LINE_SIZE - 2;
 
-/** Cuts typed text to what line[64] holds with its newline and '\0', at a character boundary. */
-export function fitInput(text: string): string {
+/** Cuts typed text to what one fgets() reads whole (line[64] by default), at a character boundary. */
+export function fitInput(text: string, max = MAX_INPUT_BYTES): string {
   let out = "";
   for (const ch of text) {
-    if (bytesOf(out + ch).length > MAX_INPUT_BYTES) break;
+    if (bytesOf(out + ch).length > max) break;
     out += ch;
   }
   return out;
@@ -179,14 +181,15 @@ export interface Scanned {
 }
 
 /**
- * sscanf(line, "%d %d %d", ...) as glibc does it: each %d skips white space,
- * reads an optional sign and at least one digit (strtol saturates at long's
- * range, then the value is cut to an int), and the first failure stops it.
+ * sscanf(line, "%d %d …", ...) with `count` conversions, as glibc does it:
+ * each %d skips white space, reads an optional sign and at least one digit
+ * (strtol saturates at long's range, then the value is cut to an int), and
+ * the first failure stops it.
  */
-export function scanMarks(bytes: number[]): Scanned {
+export function scanInts(bytes: number[], count: number): Scanned {
   const values: number[] = [];
   let i = 0;
-  for (let n = 0; n < SUBJECTS; n++) {
+  for (let n = 0; n < count; n++) {
     while (i < bytes.length && isSpace(bytes[i]!)) i++;
     if (i >= bytes.length) return { result: n === 0 ? -1 : n, values };
     let j = i;
@@ -201,7 +204,12 @@ export function scanMarks(bytes: number[]): Scanned {
     values.push(Number(BigInt.asIntN(32, value)));
     i = j;
   }
-  return { result: SUBJECTS, values };
+  return { result: count, values };
+}
+
+/** sscanf(line, "%d %d %d", ...): read_marks()'s three marks. */
+export function scanMarks(bytes: number[]): Scanned {
+  return scanInts(bytes, SUBJECTS);
 }
 
 /** read_marks()'s check after sscanf(): the index of the first mark outside 0 to 100, or -1. */

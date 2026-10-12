@@ -23,7 +23,7 @@ describe("how parts show a step", () => {
   });
 
   it("lights the units a step names, and leaves the core's other units as they are", () => {
-    const store: Step = { ...step(["marks"]), parts: ["cpu.core0.l1d", "cpu.core0.tlb"] };
+    const store: Step = { ...step(["program"]), parts: ["cpu.core0.l1d", "cpu.core0.tlb"] };
     const running = activityAt(TREE, store, 0);
     expect(partState(part("cpu.core0"), running, true)).toBe("current");
     expect(partState(part("cpu.core0.l1d"), running, true)).toBe("touched");
@@ -33,6 +33,13 @@ describe("how parts show a step", () => {
     // Another core's units follow their core.
     expect(partState(part("cpu.core1.l1d"), running, true)).toBe("idle");
     expect(dimmed(part("cpu.core1.l1d"), running, true)).toBe(true);
+  });
+
+  it("keeps the units of every running core neutral, not just core 0's", () => {
+    const parallel = activityAt(TREE, { ...step(["program"]), cores: [1, 2] }, 0);
+    expect(partState(part("cpu.core1"), parallel, true)).toBe("current");
+    expect(partState(part("cpu.core1.decode"), parallel, true)).toBe("idle");
+    expect(partState(part("cpu.core0"), parallel, true)).toBe("dim");
   });
 
   it("dims a part inside a dimmed part with it, and nothing when no trace runs", () => {

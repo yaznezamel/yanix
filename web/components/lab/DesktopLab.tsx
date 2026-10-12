@@ -4,7 +4,7 @@ import { MotionConfig, useReducedMotion } from "motion/react";
 import Link from "next/link";
 import { useEffect, useMemo, useReducer, useRef, useState } from "react";
 import { Desktop } from "@/components/desktop/Desktop";
-import { programReads } from "@/components/desktop/TerminalApp";
+import { inputLimit } from "@/components/desktop/TerminalApp";
 import { VirtualScreen } from "@/components/desktop/VirtualScreen";
 import { HardwareView, type HardwareHandle } from "@/components/hardware/HardwareView";
 import {
@@ -18,8 +18,10 @@ import {
   type PlayerAction,
 } from "@/lib/xray/engine";
 import { buildPath } from "@/lib/xray/geometry";
+import { CORES_C } from "@/lib/xray/cores/source";
 import { fitInput } from "@/lib/xray/marks/program";
 import { MARKS_C } from "@/lib/xray/marks/source";
+import { programReads } from "@/lib/xray/scenarios";
 import { framesAround } from "@/lib/xray/packets";
 import type { AppId, Detail, MachineState, NodeId, ScenarioRequest, TermLine } from "@/lib/xray/types";
 import { Narration } from "./Narration";
@@ -116,34 +118,39 @@ function terminalReply(command: string): TermLine[] {
       return [
         echo,
         { kind: "output", text: "Traced: cat notes.txt   read a file through VFS, the page cache and the SSD" },
-        { kind: "output", text: "        ./marks        run a C program; watch its stack and heap in the Memory tab" },
-        { kind: "output", text: "Also:   ls · cat marks.c · make · clear · help" },
+        { kind: "output", text: "        ./marks        a C program: watch its stack and heap in the Memory tab" },
+        { kind: "output", text: "        ./cores        a C program with threads: watch them run on every core" },
+        { kind: "output", text: "Also:   ls · cat marks.c · cat cores.c · make · clear · help" },
         { kind: "hint", text: "Other apps trace too: search in Chromium, open notes.txt in the Text Editor, play a sound in Videos." },
       ];
     case "ls":
-      return [echo, { kind: "output", text: "Makefile  marks  marks.c  notes.txt" }];
-    case "cat":
-      if (args.join(" ") === "marks.c") {
+      return [echo, { kind: "output", text: "Makefile  cores  cores.c  marks  marks.c  notes.txt" }];
+    case "cat": {
+      const file = args.join(" ");
+      const source = file === "marks.c" ? MARKS_C : file === "cores.c" ? CORES_C : null;
+      if (source) {
         return [
           echo,
-          ...MARKS_C.map((text) => ({ kind: "output" as const, text: text.replace(/\t/g, "        ") })),
-          { kind: "hint", text: "Not traced: cat notes.txt is. Run the program with ./marks." },
+          ...source.map((text) => ({ kind: "output" as const, text: text.replace(/\t/g, "        ") })),
+          { kind: "hint", text: `Not traced: cat notes.txt is. Run the program with ./${file.slice(0, -2)}.` },
         ];
       }
-      return [echo, { kind: "output", text: `cat: ${args.join(" ") || "-"}: No such file or directory` }];
+      return [echo, { kind: "output", text: `cat: ${file || "-"}: No such file or directory` }];
+    }
     case "make":
-      return [echo, { kind: "output", text: "make: 'marks' is up to date." }];
+      return [echo, { kind: "output", text: "make: Nothing to be done for 'all'." }];
     case "marks":
+    case "cores":
       return [
         echo,
-        { kind: "output", text: "bash: marks: command not found" },
-        { kind: "hint", text: "bash looks for commands in PATH, not in the current directory: type ./marks" },
+        { kind: "output", text: `bash: ${name}: command not found` },
+        { kind: "hint", text: `bash looks for commands in PATH, not in the current directory: type ./${name}` },
       ];
     default:
       return [
         echo,
         { kind: "output", text: `bash: ${name}: command not found` },
-        { kind: "hint", text: "Only cat notes.txt and ./marks are traced. Type help." },
+        { kind: "hint", text: "Only cat notes.txt, ./marks and ./cores are traced. Type help." },
       ];
   }
 }
@@ -226,17 +233,18 @@ export function DesktopLab() {
 
   function handleCommand(raw: string) {
     // While the program reads, the line goes to it as typed: spaces and all.
-    if (programReads(committedApps(state).program)) {
-      request({ kind: "programInput", text: fitInput(raw) });
+    const program = committedApps(state).program;
+    if (programReads(program)) {
+      request({ kind: "programInput", text: fitInput(raw, inputLimit(program)) });
       return;
     }
     const command = raw.trim().replace(/\s+/g, " ");
-    if (command === "./marks") {
+    if (command === "./marks" || command === "./cores") {
       if (!shownMemory.current) {
         shownMemory.current = true;
         setTab("memory");
       }
-      request({ kind: "runProgram" });
+      request({ kind: "runProgram", program: command === "./cores" ? "cores" : "marks" });
     } else if (command === "cat notes.txt") {
       request({ kind: "readFile" });
     } else if (command === "clear") {
@@ -582,7 +590,7 @@ export function DesktopLab() {
                 <MemoryView
                   program={apps.program}
                   terminalOpen={apps.windows.terminal === "open"}
-                  onRun={() => handleCommand("./marks")}
+                  onRun={(name) => handleCommand(`./${name}`)}
                   onOpenTerminal={() => request({ kind: "launch", app: "terminal" })}
                 />
               </div>

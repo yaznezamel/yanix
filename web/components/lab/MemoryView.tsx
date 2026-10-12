@@ -1,23 +1,32 @@
 "use client";
 
-import { useEffect, useRef } from "react";
 import { HEADER, PAGE, topSize, type Chunk } from "@/lib/xray/marks/heap";
 import { CALLEE, MAIN, MAPPED, RETURNS, STUDENT_SIZE, TTY_BLOCK, hex, layoutOf, type Layout } from "@/lib/xray/marks/layout";
-import { CHANGE, chunkKey, cString, textOf, userOf, type ProgramState } from "@/lib/xray/marks/program";
+import { CHANGE, chunkKey, userOf, type ProgramState } from "@/lib/xray/marks/program";
 import { MARKS_C } from "@/lib/xray/marks/source";
+import type { Program } from "@/lib/xray/types";
+import { CoresView } from "./CoresView";
+import { Changed, Frame, LineBytes, Panel, Source, Unset, ViewHeader, type Slot } from "./memoryParts";
 
-// The Memory tab: the memory of examples/marks/marks.c as the trace goes,
-// read like a debugger shows it. The source line a step is about, main()'s
+// The Memory tab: the memory of the C program in the terminal as the trace
+// goes, read like a debugger shows it. This file draws examples/marks/marks.c;
+// CoresView.tsx draws examples/cores/cores.c. The source line a step is about, main()'s
 // stack frame and the one below it, the heap's chunks, and where both sit in
 // the address space. What the current step changed is marked. Addresses come
 // from real runs (lib/xray/marks/layout.ts); ASLR changes them on every run.
 
 interface MemoryViewProps {
-  program: ProgramState | null;
-  /** The terminal is open, so ./marks can be typed in it. */
+  program: Program | null;
+  /** The terminal is open, so a program can be typed in it. */
   terminalOpen: boolean;
-  onRun: () => void;
+  onRun: (program: "marks" | "cores") => void;
   onOpenTerminal: () => void;
+}
+
+/** The program that ran last in the terminal, or how to start one. */
+export function MemoryView({ program, terminalOpen, onRun, onOpenTerminal }: MemoryViewProps) {
+  if (!program) return <Empty terminalOpen={terminalOpen} onRun={onRun} onOpenTerminal={onOpenTerminal} />;
+  return program.kind === "cores" ? <CoresView program={program} /> : <MarksView program={program} />;
 }
 
 const STAGE: Record<ProgramState["stage"], string> = {
@@ -46,34 +55,14 @@ const STACK_KEYS = new Set<string>([
 const isHeapKey = (key: string) =>
   key.startsWith("heap:") || key.startsWith("page:") || ([CHANGE.brk, CHANGE.top, CHANGE.tcache, CHANGE.stdout, CHANGE.stdin] as string[]).includes(key);
 
-export function MemoryView({ program, terminalOpen, onRun, onOpenTerminal }: MemoryViewProps) {
-  if (!program) return <Empty terminalOpen={terminalOpen} onRun={onRun} onOpenTerminal={onOpenTerminal} />;
+function MarksView({ program }: { program: ProgramState }) {
   const layout = layoutOf(program.run);
   const changed = new Set(program.changed);
   const exited = program.stage === "exited";
 
   return (
     <div className="@container h-full overflow-y-auto px-3 pb-3">
-      <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1 pb-2">
-        <h2 className="font-mono text-[13px] font-semibold text-lab-ink">./marks</h2>
-        <span
-          className={`rounded px-1.5 py-0.5 font-mono text-[11px] ${
-            exited ? "bg-white/5 text-lab-muted" : "bg-signal/12 text-signal"
-          }`}
-        >
-          {STAGE[program.stage]}
-        </span>
-        <span className="text-[11.5px] text-lab-muted">
-          Addresses from a real run of the program. ASLR picks new ones every run (this is run{" "}
-          {program.run + 1}).
-        </span>
-      </div>
-      {exited && (
-        <p className="mb-3 rounded-md border border-lab-line bg-lab-panel2 px-3 py-2 text-[12.5px] text-lab-ink/85">
-          The process has exited and the kernel has taken back every page. This is how its memory looked
-          last. Type <span className="font-mono text-signal">./marks</span> in the Terminal to run it again.
-        </p>
-      )}
+      <ViewHeader command="./marks" stage={STAGE[program.stage]} exited={exited} run={program.run} />
       {/* One column when narrow; the source above the stack and the heap when wider; three columns when wide. */}
       <div
         className={`grid items-start gap-3 [grid-template-areas:'source'_'stack'_'heap'_'map'] @2xl:grid-cols-2 @2xl:[grid-template-areas:'source_source'_'stack_heap'_'map_map'] @5xl:grid-cols-[minmax(0,0.9fr)_minmax(0,1fr)_minmax(0,1fr)] @5xl:[grid-template-areas:'source_stack_heap'_'map_stack_heap'] ${
@@ -81,7 +70,7 @@ export function MemoryView({ program, terminalOpen, onRun, onOpenTerminal }: Mem
         }`}
       >
         <div className="min-w-0 [grid-area:source]">
-          <Source at={program.at} />
+          <Source name="marks.c" lines={MARKS_C} at={program.at} />
         </div>
         <div className="min-w-0 [grid-area:stack]">
           <Stack program={program} layout={layout} changed={changed} />
@@ -97,83 +86,46 @@ export function MemoryView({ program, terminalOpen, onRun, onOpenTerminal }: Mem
   );
 }
 
+const BUTTON =
+  "min-h-9 rounded-md border border-signal/60 bg-signal/10 px-3 font-mono text-[13px] font-medium text-signal hover:bg-signal/20";
+
 function Empty({ terminalOpen, onRun, onOpenTerminal }: Omit<MemoryViewProps, "program">) {
   return (
     <div className="flex h-full flex-col items-start justify-center-safe gap-3 overflow-y-auto px-5 py-4">
       <h2 className="text-lg font-semibold text-lab-ink">Inside a running program</h2>
       <p className="max-w-[60ch] text-[14px] leading-relaxed text-lab-ink/85">
-        <span className="font-mono text-signal">./marks</span> is a small C program: it asks for
-        students&apos; names and marks, keeps them on its stack and its heap, and prints the averages.
-        Run it in the Terminal and answer its questions. Every line you type is traced through the
-        kernel and the hardware, and this tab shows its memory at each step: the stack frames, the heap
-        chunks, and the line of C that changed them.
+        Two small C programs run in the Terminal, and this tab shows what they do with memory at every step
+        of their traces, next to the line of C that did it.
       </p>
-      <button
-        type="button"
-        onClick={terminalOpen ? onRun : onOpenTerminal}
-        className="min-h-9 rounded-md border border-signal/60 bg-signal/10 px-3 text-[13px] font-medium text-signal hover:bg-signal/20"
-      >
-        {terminalOpen ? "Run ./marks" : "Open the Terminal"}
-      </button>
-      {!terminalOpen && (
-        <p className="text-[12px] text-lab-muted">Then type ./marks in it, or come back here and press Run.</p>
-      )}
+      <ul className="flex max-w-[60ch] flex-col gap-2 text-[13.5px] leading-relaxed text-lab-ink/85">
+        <li>
+          <span className="font-mono text-signal">./marks</span> asks for students&apos; names and marks, and
+          keeps them on its stack and its heap: frames, chunks, strdup() and realloc().
+        </li>
+        <li>
+          <span className="font-mono text-signal">./cores</span> adds up a million marks with up to four threads,
+          which the kernel runs on different cores at the same time: a stack each, one shared array.
+        </li>
+      </ul>
+      <div className="flex flex-wrap gap-2">
+        {terminalOpen ? (
+          (["marks", "cores"] as const).map((name) => (
+            <button key={name} type="button" onClick={() => onRun(name)} className={BUTTON}>
+              Run ./{name}
+            </button>
+          ))
+        ) : (
+          <button type="button" onClick={onOpenTerminal} className={BUTTON}>
+            Open the Terminal
+          </button>
+        )}
+      </div>
+      {!terminalOpen && <p className="text-[12px] text-lab-muted">Then type ./marks or ./cores in it, or come back here.</p>}
       <p className="max-w-[60ch] text-[12px] leading-relaxed text-lab-muted">
-        The program is <span className="font-mono">examples/marks/marks.c</span> in the repository: build
-        it with make on any Linux machine and watch it for real with strace and gdb.
+        The programs are in <span className="font-mono">examples/</span> in the repository: build them with make on
+        any Linux machine and watch them for real with strace and gdb.
       </p>
     </div>
-  );
-}
-
-// ---------------------------------------------------------------- source
-
-/** Lines of marks.c shown when there is no room for the whole file. */
-const CONTEXT = 4;
-
-function Source({ at }: { at: number }) {
-  const boxRef = useRef<HTMLDivElement>(null);
-  const lineRef = useRef<HTMLDivElement>(null);
-
-  // Scroll the box, not the page, so the current line is in the middle.
-  useEffect(() => {
-    const box = boxRef.current;
-    const line = lineRef.current;
-    if (!box || !line) return;
-    box.scrollTop = line.offsetTop - box.clientHeight / 2 + line.clientHeight / 2;
-  }, [at]);
-
-  return (
-    <section aria-label="Source code" className="rounded-lg border border-lab-line bg-lab-panel2/60">
-      <h3 className="flex items-baseline justify-between gap-2 border-b border-lab-line px-2.5 py-1.5 font-mono text-[11px] uppercase tracking-[0.1em] text-lab-muted">
-        marks.c
-        <span className="normal-case tracking-normal">{at > 0 ? `line ${at}` : "before main()"}</span>
-      </h3>
-      <div
-        ref={boxRef}
-        className="relative max-h-[10.5rem] overflow-y-auto py-1 font-mono text-[11.5px] leading-[1.6] @5xl:max-h-[20rem]"
-      >
-        {MARKS_C.map((text, i) => {
-          const n = i + 1;
-          const current = n === at;
-          return (
-            <div
-              key={n}
-              ref={current ? lineRef : undefined}
-              aria-current={current ? "step" : undefined}
-              className={`flex gap-2 pr-2 whitespace-pre ${
-                current ? "bg-signal/15 text-lab-ink" : Math.abs(n - at) <= CONTEXT ? "text-lab-ink/80" : "text-lab-ink/45"
-              }`}
-            >
-              <span className={`w-8 shrink-0 text-right ${current ? "text-signal" : "text-lab-muted/70"}`}>
-                {current ? "▶" : n}
-              </span>
-              <span>{text.replace(/\t/g, "    ")}</span>
-            </div>
-          );
-        })}
-      </div>
-    </section>
   );
 }
 
@@ -220,19 +172,8 @@ function AddressSpace({ program, layout, changed }: { program: ProgramState; lay
 
 // ---------------------------------------------------------------- stack
 
-interface Slot {
-  key?: string;
-  offset: number;
-  name: string;
-  value: React.ReactNode;
-  note?: string;
-}
-
-const signed = (n: number) => (n < 0 ? `−${hex(-n)}` : `+${hex(n)}`);
-const unset = <span className="text-lab-muted">?</span>;
-
 function pointerTo(layout: Layout, program: ProgramState, offset: number | null): React.ReactNode {
-  if (offset === null) return unset;
+  if (offset === null) return <Unset />;
   if (offset === 0) return <span className="text-lab-ink/90">NULL</span>;
   const chunk = offset - HEADER;
   const name = program.names[chunk];
@@ -272,7 +213,7 @@ function Stack({ program, layout, changed }: { program: ProgramState; layout: La
     ...(program.freeI !== null ? [{ key: CHANGE.freeI, offset: MAIN.freeI, name: "i (freeing)", value: String(program.freeI) }] : []),
     { key: CHANGE.count, offset: MAIN.count, name: "count", value: String(program.count) },
     { key: CHANGE.students, offset: MAIN.students, name: "students", value: pointerTo(layout, program, program.students) },
-    { key: CHANGE.got, offset: MAIN.got, name: "got", value: program.got === null ? unset : String(program.got) },
+    { key: CHANGE.got, offset: MAIN.got, name: "got", value: program.got === null ? <Unset /> : String(program.got) },
   ];
   const callee = program.callee;
   const calleeRbp = layout.rbp + CALLEE.rbp;
@@ -295,7 +236,7 @@ function Stack({ program, layout, changed }: { program: ProgramState; layout: La
           slots={[
             { offset: 0x8, name: "return address", value: hex(layout.exe + RETURNS.readMarks), note: "back into main()" },
             { offset: 0, name: "saved rbp", value: hex(layout.rbp), note: "main()'s" },
-            { key: CHANGE.calleeVars, offset: CALLEE.readMarks.i, name: "i", value: callee.i === null ? unset : String(callee.i) },
+            { key: CHANGE.calleeVars, offset: CALLEE.readMarks.i, name: "i", value: callee.i === null ? <Unset /> : String(callee.i) },
             { offset: CALLEE.readMarks.line, name: "line", value: lineAddress, note: "→ main()'s line[]" },
             { offset: CALLEE.readMarks.lineSize, name: "size", value: "64" },
             { offset: CALLEE.readMarks.marks, name: "marks", value: hex(layout.rbp + MAIN.s + 8), note: "→ main()'s s.marks" },
@@ -311,8 +252,8 @@ function Stack({ program, layout, changed }: { program: ProgramState; layout: La
           slots={[
             { offset: 0x8, name: "return address", value: hex(layout.exe + RETURNS.average), note: "back into main()" },
             { offset: 0, name: "saved rbp", value: hex(layout.rbp), note: "main()'s" },
-            { key: CHANGE.callee, offset: CALLEE.average.i, name: "i", value: callee.i === null ? unset : String(callee.i) },
-            { key: CHANGE.callee, offset: CALLEE.average.sum, name: "sum", value: callee.sum === null ? unset : String(callee.sum) },
+            { key: CHANGE.callee, offset: CALLEE.average.i, name: "i", value: callee.i === null ? <Unset /> : String(callee.i) },
+            { key: CHANGE.callee, offset: CALLEE.average.sum, name: "sum", value: callee.sum === null ? <Unset /> : String(callee.sum) },
             {
               offset: CALLEE.average.marks,
               name: "marks",
@@ -327,85 +268,6 @@ function Stack({ program, layout, changed }: { program: ProgramState; layout: La
   );
 }
 
-function Frame({
-  title,
-  detail,
-  slots,
-  lit,
-  changed,
-}: {
-  title: string;
-  detail: string;
-  slots: Slot[];
-  lit: boolean;
-  changed: Set<string>;
-}) {
-  return (
-    <div className={`border-t border-lab-line first:border-t-0 ${lit ? "bg-signal/[0.06]" : ""}`}>
-      <p className="flex flex-wrap items-baseline gap-x-2 px-2.5 pt-1.5 pb-0.5">
-        <span className={`font-mono text-[12px] font-semibold ${lit ? "text-signal" : "text-lab-ink"}`}>{title}</span>
-        <span className="font-mono text-[10.5px] text-lab-muted">{detail}</span>
-        {lit && <Changed />}
-      </p>
-      <dl className="grid grid-cols-[4.6rem_minmax(0,auto)_minmax(0,1fr)] items-baseline gap-x-2 px-1.5 pb-1.5">
-        {slots.map((slot) => {
-          const hot = slot.key !== undefined && changed.has(slot.key);
-          return (
-            <div
-              key={`${slot.name}-${slot.offset}`}
-              className={`col-span-3 grid grid-cols-subgrid items-baseline rounded px-1 py-[3px] ${hot ? "bg-signal/12 ring-1 ring-signal/50" : ""}`}
-            >
-              <dt className="font-mono text-[10.5px] text-lab-muted" title="Offset from this frame's rbp">
-                rbp{signed(slot.offset)}
-              </dt>
-              <dt className={`font-mono text-[11.5px] ${hot ? "text-signal" : "text-lab-ink/90"}`}>{slot.name}</dt>
-              <dd className="min-w-0 break-words font-mono text-[11.5px] text-lab-ink/90">
-                {slot.value}
-                {slot.note && <span className="text-lab-muted"> {slot.note}</span>}
-                {hot && <Changed />}
-              </dd>
-            </div>
-          );
-        })}
-      </dl>
-    </div>
-  );
-}
-
-/** How many bytes of line[] to draw: the string, its '\0' and a few after. */
-const SHOWN_BYTES = 20;
-
-function LineBytes({ bytes }: { bytes: (number | null)[] }) {
-  const string = textOf(cString(bytes));
-  const written = bytes.some((b) => b !== null);
-  if (!written) return unset;
-  return (
-    <span className="inline-flex flex-col gap-1">
-      <span>&quot;{string.replace(/\n/g, "\\n")}&quot;</span>
-      <span className="flex flex-wrap gap-px" aria-label="The first bytes of line">
-        {bytes.slice(0, SHOWN_BYTES).map((b, i) => (
-          <span
-            key={i}
-            title={b === null ? "not written yet" : `line[${i}] = ${hex(b)}`}
-            className={`grid h-[18px] min-w-[18px] place-items-center rounded-[3px] px-0.5 text-[10.5px] ${
-              b === null
-                ? "bg-white/[0.03] text-lab-muted/60"
-                : b === 0
-                  ? "bg-[#ffb35c]/15 text-[#ffb35c]"
-                  : b === 0x0a
-                    ? "bg-[#c0a6ff]/15 text-[#c0a6ff]"
-                    : "bg-white/[0.07] text-lab-ink"
-            }`}
-          >
-            {b === null ? "·" : b === 0 ? "\\0" : b === 0x0a ? "\\n" : b === 0x20 ? "␣" : b > 0x20 && b < 0x7f ? String.fromCharCode(b) : "•"}
-          </span>
-        ))}
-        <span className="self-center text-[10px] text-lab-muted">…{64 - SHOWN_BYTES} more</span>
-      </span>
-    </span>
-  );
-}
-
 function Ints({ values }: { values: (number | null)[] }) {
   return (
     <span>
@@ -413,7 +275,7 @@ function Ints({ values }: { values: (number | null)[] }) {
       {values.map((v, i) => (
         <span key={i}>
           {i > 0 && ", "}
-          {v === null ? unset : v}
+          {v === null ? <Unset /> : v}
         </span>
       ))}
       {" }"}
@@ -586,27 +448,4 @@ function describe(chunk: Chunk, program: ProgramState, freed: boolean): React.Re
     default:
       return "free space";
   }
-}
-
-// ---------------------------------------------------------------- shared
-
-function Panel({ title, sub, lit, children }: { title: string; sub: string; lit: boolean; children: React.ReactNode }) {
-  return (
-    <section
-      aria-label={title}
-      className={`rounded-lg border bg-lab-panel2/60 ${lit ? "border-signal/50" : "border-lab-line"}`}
-    >
-      <h3 className="flex flex-wrap items-baseline gap-x-2 border-b border-lab-line px-2.5 py-1.5">
-        <span className={`font-mono text-[11px] uppercase tracking-[0.1em] ${lit ? "text-signal" : "text-lab-muted"}`}>
-          {title}
-        </span>
-        <span className="font-mono text-[10.5px] text-lab-muted">{sub}</span>
-      </h3>
-      {children}
-    </section>
-  );
-}
-
-function Changed() {
-  return <span className="ml-1.5 font-sans text-[10px] font-medium text-signal">changed</span>;
 }

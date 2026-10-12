@@ -2,29 +2,36 @@
 
 import { useEffect, useRef } from "react";
 import { PROMPT } from "@/lib/xray/apps";
-import { MAX_INPUT_BYTES, type ProgramState } from "@/lib/xray/marks/program";
-import type { TermLine, TerminalState } from "@/lib/xray/types";
+import { MAX_THREADS_INPUT } from "@/lib/xray/cores/program";
+import { MAX_INPUT_BYTES } from "@/lib/xray/marks/program";
+import { programReads } from "@/lib/xray/scenarios";
+import type { Program, TermLine, TerminalState } from "@/lib/xray/types";
 import styles from "../lab/lab.module.css";
 
 interface TerminalAppProps {
   state: TerminalState;
   /** The C program running in the terminal, if any: while it reads, what you type goes to it. */
-  program: ProgramState | null;
+  program: Program | null;
   onCommand: (command: string) => void;
 }
 
-const SHELL_QUICK = ["./marks", "cat notes.txt", "help", "clear"];
+const SHELL_QUICK = ["./marks", "./cores", "cat notes.txt", "help", "clear"];
 
-/** Answers to try for each of the program's questions: a good one, and one it should reject or end on. */
-export const PROGRAM_ANSWERS: Partial<Record<ProgramState["stage"], string[]>> = {
-  name: ["Ada", "Linus"],
-  marks: ["72 85 90", "90 abc"],
-  again: ["y", "n"],
-};
+/** Answers to try for each question a program asks: a good one, and one it should reject or end on. */
+export function programAnswers(program: Program | null): string[] {
+  if (!program) return [];
+  if (program.kind === "cores") return program.stage === "threads" ? ["4", "1", "0"] : [];
+  const answers: Partial<Record<typeof program.stage, string[]>> = {
+    name: ["Ada", "Linus"],
+    marks: ["72 85 90", "90 abc"],
+    again: ["y", "n"],
+  };
+  return answers[program.stage] ?? [];
+}
 
-/** Is the program blocked in read(), waiting for a line? */
-export function programReads(program: ProgramState | null): boolean {
-  return program !== null && (program.stage === "name" || program.stage === "marks" || program.stage === "again");
+/** The longest line the program reads whole with one fgets(), in bytes. */
+export function inputLimit(program: Program | null): number {
+  return program?.kind === "cores" ? MAX_THREADS_INPUT : MAX_INPUT_BYTES;
 }
 
 export function TerminalApp({ state, program, onCommand }: TerminalAppProps) {
@@ -38,7 +45,8 @@ export function TerminalApp({ state, program, onCommand }: TerminalAppProps) {
   // A program's question, still unanswered: the input goes on its line.
   const asking = reads && last?.kind === "ask" && last.answer === undefined ? last : null;
   const lines = asking ? state.lines.slice(0, -1) : state.lines;
-  const quick = reads ? (PROGRAM_ANSWERS[program!.stage] ?? []) : SHELL_QUICK;
+  const quick = reads ? programAnswers(program) : SHELL_QUICK;
+  const name = program?.kind === "cores" ? "cores" : "marks";
 
   useEffect(() => {
     const el = scrollRef.current;
@@ -88,10 +96,10 @@ export function TerminalApp({ state, program, onCommand }: TerminalAppProps) {
             <input
               ref={inputRef}
               name="command"
-              aria-label={asking ? `marks asks: ${asking.text.trim()}` : reads ? "Input for marks" : "Terminal command"}
+              aria-label={asking ? `${name} asks: ${asking.text.trim()}` : reads ? `Input for ${name}` : "Terminal command"}
               autoComplete="off"
               spellCheck={false}
-              maxLength={reads ? MAX_INPUT_BYTES : undefined}
+              maxLength={reads ? inputLimit(program) : undefined}
               className="min-w-0 flex-1 bg-transparent text-[#e8edf2] caret-signal outline-none"
             />
           </form>
@@ -113,7 +121,7 @@ export function TerminalApp({ state, program, onCommand }: TerminalAppProps) {
             {cmd}
           </button>
         ))}
-        {reads && <span className="ml-auto truncate text-white/45">marks is reading what you type</span>}
+        {reads && <span className="ml-auto truncate text-white/45">{name} is reading what you type</span>}
       </div>
     </div>
   );

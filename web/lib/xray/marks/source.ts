@@ -106,15 +106,25 @@ export const MARKS_C: readonly string[] = [
   "}",
 ];
 
+/** The number (from 1) of the first of `lines` after line `after` that contains the text. */
+export function findLine(lines: readonly string[], text: string, after = 0): number {
+  const index = lines.findIndex((line, i) => i >= after && line.includes(text));
+  if (index < 0) throw new Error(`no line with ${JSON.stringify(text)}`);
+  return index + 1;
+}
+
+/** Line `at` of `lines` (from 1) without its indentation and comment, or null before main(). */
+export function codeAt(lines: readonly string[], at: number): string | null {
+  const text = lines[at - 1];
+  return at > 0 && text !== undefined ? text.replace(/\s*\/\*.*\*\/\s*$/, "").trim() : null;
+}
+
 /** The number (from 1) of the first line of marks.c after line `after` that contains the text. */
 export function lineOf(text: string, after = 0): number {
-  const index = MARKS_C.findIndex((line, i) => i >= after && line.includes(text));
-  if (index < 0) throw new Error(`marks.c has no line with ${JSON.stringify(text)}`);
-  return index + 1;
+  return findLine(MARKS_C, text, after);
 }
 
 /** Line `at` of marks.c (from 1) without its indentation and comment, or null before main(). */
 export function sourceLine(at: number): string | null {
-  const text = MARKS_C[at - 1];
-  return at > 0 && text !== undefined ? text.replace(/\s*\/\*.*\*\/\s*$/, "").trim() : null;
+  return codeAt(MARKS_C, at);
 }
