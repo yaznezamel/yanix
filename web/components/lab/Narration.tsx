@@ -25,6 +25,10 @@ interface NarrationProps {
   onShowInHardware: (id: NodeId) => void;
 }
 
+/** Smooth scrolling, unless the reader asked for less motion. */
+const scrollBehavior = (): ScrollBehavior =>
+  window.matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth";
+
 /** Watches a scrolling text box: is there more below the fold? */
 function useMoreCue() {
   const scroller = useRef<HTMLDivElement | null>(null);
@@ -44,9 +48,16 @@ function useMoreCue() {
   }, []);
   const scrollDown = useCallback(() => {
     const el = scroller.current;
-    if (el) el.scrollBy({ top: el.clientHeight * 0.75, behavior: "smooth" });
+    if (el) el.scrollBy({ top: el.clientHeight * 0.75, behavior: scrollBehavior() });
   }, []);
-  return { watch, more, scrollDown };
+  /** Scrolls the box, and only the box, until an element inside it is at the top. */
+  const reveal = useCallback((target: HTMLElement | null) => {
+    const el = scroller.current;
+    if (!el || !target) return;
+    const top = target.getBoundingClientRect().top - el.getBoundingClientRect().top + el.scrollTop - 4;
+    el.scrollTo({ top, behavior: scrollBehavior() });
+  }, []);
+  return { watch, more, scrollDown, reveal };
 }
 
 /** A fade and a "More" button over the bottom of a text that scrolls. */
@@ -221,6 +232,54 @@ function Route({ path, reached }: { path: NodeId[]; reached: number }) {
   );
 }
 
+/**
+ * The step's figures at a glance, for a step whose packets fill the panel
+ * beside the story: how much it moves, and where AWS does the same. Each chip
+ * scrolls to its full sentence, below the step's text.
+ */
+function Facts({
+  amount,
+  service,
+  onData,
+  onAws,
+}: {
+  amount: string | null;
+  service: string | null;
+  onData: () => void;
+  onAws: () => void;
+}) {
+  return (
+    <div className="flex min-w-0 shrink-0 items-center gap-1.5 text-[11.5px] leading-none">
+      {amount && (
+        <button
+          type="button"
+          onClick={onData}
+          title="How much data this step moves"
+          className="flex shrink-0 items-center gap-1.5 rounded-full border border-signal/30 bg-signal/[0.06] py-0.5 pr-2 pl-0.5 hover:border-signal/70"
+        >
+          <span className="rounded-full bg-signal/15 px-1.5 py-0.5 font-mono text-[10px] uppercase tracking-[0.1em] text-signal">
+            Data
+          </span>
+          <span className="font-mono font-semibold text-lab-ink">{amount}</span>
+        </button>
+      )}
+      {service && (
+        <button
+          type="button"
+          onClick={onAws}
+          title="The same idea on AWS"
+          className="flex min-w-0 items-center gap-1.5 rounded-full border border-[#ff9900]/35 bg-[#ff9900]/[0.06] py-0.5 pr-2 pl-0.5 hover:border-[#ff9900]/70"
+        >
+          <span className="shrink-0 rounded-full bg-[#ff9900]/15 px-1.5 py-0.5 font-mono text-[10px] uppercase tracking-[0.1em] text-[#ffb547]">
+            AWS
+          </span>
+          <span className="truncate font-semibold text-[#ffd08a]">{service}</span>
+        </button>
+      )}
+    </div>
+  );
+}
+
 function Intro() {
   const { watch, more, scrollDown } = useMoreCue();
   return (
@@ -270,9 +329,14 @@ function StepStory({
   reached: number;
 }) {
   // The scrolling text is a new element for every step; the cue follows it.
-  const { watch, more, scrollDown } = useMoreCue();
+  const { watch, more, scrollDown, reveal } = useMoreCue();
+  const dataLine = useRef<HTMLParagraphElement>(null);
+  const awsCard = useRef<HTMLDivElement>(null);
   const layers = Array.from(new Set(step.path.map((id) => NODES[id].layer)));
   const data = dataOf(step);
+  // With packets in flight the panel beside the story shows them, so the
+  // step's data line and AWS note sit below its text: name them up front.
+  const withPackets = (step.frames?.length ?? 0) > 0;
   // A step of ./marks: the line of C it is about.
   const program = step.ui?.program;
   const code = program && program.stage !== "exited" ? codeAt(program.kind === "cores" ? CORES_C : MARKS_C, program.at) : null;
@@ -320,6 +384,14 @@ function StepStory({
             {step.title}
           </h2>
           <Route path={step.path} reached={reached} />
+          {withPackets && (data || step.aws) && (
+            <Facts
+              amount={data?.amount ?? null}
+              service={step.aws?.service ?? null}
+              onData={() => reveal(dataLine.current)}
+              onAws={() => reveal(awsCard.current)}
+            />
+          )}
           {code && (
             <p className="flex min-w-0 items-baseline gap-2 rounded-md border border-lab-line bg-lab-panel2 px-2.5 py-1.5 font-mono text-[12px]">
               <span className="shrink-0 text-lab-muted">
@@ -335,14 +407,21 @@ function StepStory({
             {step.body}
           </p>
           {data && (
-            <p className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5 rounded-md border border-signal/25 bg-signal/[0.05] px-2.5 py-1.5">
+            <p
+              ref={dataLine}
+              className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5 rounded-md border border-signal/25 bg-signal/[0.05] px-2.5 py-1.5"
+            >
               <span className="font-mono text-[10.5px] uppercase tracking-[0.12em] text-signal">Data</span>
               <span className="font-mono text-[14px] font-semibold text-lab-ink">{data.amount}</span>
               <span className="text-[12.5px] leading-snug text-lab-ink/80">{data.what}</span>
             </p>
           )}
           {/* A step with packets keeps the panel beside the story for them: its AWS note goes here. */}
-          {step.aws && (step.frames?.length ?? 0) > 0 && <AwsCard aws={step.aws} />}
+          {step.aws && withPackets && (
+            <div ref={awsCard}>
+              <AwsCard aws={step.aws} />
+            </div>
+          )}
           <div className="flex flex-wrap items-center gap-1.5">
             {layers.map((layer) => (
               <span
