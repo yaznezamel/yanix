@@ -42,6 +42,14 @@ Pause, step, replay, or drag the timeline to any point. Switch between an
 overview and a deep dive. Caches stay warm between runs, so a second read,
 launch or search does less work.
 
+Each step's route is numbered on the map and lit stop by stop. The story says
+how much data the step moves (a DNS query in a 75-byte frame, a 1,541-byte
+TLS ClientHello, 8 KiB of sound every 21 ms) and, where it fits, where AWS does
+the same thing: the VPC's DNS resolver, NAT gateways, load balancers, EBS,
+Nitro. Software is drawn as glass over the hardware it runs on, and every
+figure has a source
+([ADR 0008](docs/adr/0008-number-the-route-draw-software-as-glass-and-source-every-figure.md)).
+
 Next to the software path, the **Hardware** tab shows the same trace on the
 machine itself: zoom from the motherboard into the CPU (its lid comes off as
 you go) and one of its cores, and watch the parts and wires each step uses
