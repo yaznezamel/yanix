@@ -163,8 +163,9 @@ function Intro() {
         <p className="text-[14px] leading-relaxed text-lab-ink/80">
           Use it like any computer: search the web in <strong className="text-lab-ink">Chromium</strong>,
           open notes.txt in the <strong className="text-lab-ink">Text Editor</strong>, play a sound in{" "}
-          <strong className="text-lab-ink">Videos</strong>, type, copy and paste, or run{" "}
-          <strong className="font-mono text-lab-ink">./marks</strong>, a small C program, in the{" "}
+          <strong className="text-lab-ink">Videos</strong>, type, copy and paste, or run the small C
+          programs <strong className="font-mono text-lab-ink">./marks</strong> and{" "}
+          <strong className="font-mono text-lab-ink">./cores</strong> in the{" "}
           <strong className="text-lab-ink">Terminal</strong>. Or shut it down and start it again from the
           Start menu.
         </p>
@@ -173,9 +174,8 @@ function Intro() {
           screen, <strong className="font-medium text-lab-ink/90">Software path</strong> shows the code
           each step runs through, and <strong className="font-medium text-lab-ink/90">Hardware</strong>{" "}
           shows the parts of the computer it uses: zoom into the CPU to see its cores.{" "}
-          <strong className="font-medium text-lab-ink/90">Memory</strong> shows ./marks&apos;s stack and heap
-          as it runs. Click any box to
-          learn what it is. The steps are scripted for teaching, not traced live, and simplified: wired
+          <strong className="font-medium text-lab-ink/90">Memory</strong> shows a C program&apos;s stack, heap
+          and threads as it runs. Click any box to learn what it is. The steps are scripted for teaching, not traced live, and simplified: wired
           Ethernet, IPv4, one example of each program.
         </p>
       </div>

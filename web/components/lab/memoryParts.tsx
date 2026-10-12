@@ -70,7 +70,20 @@ export function Panel({ title, sub, lit, children }: { title: string; sub: strin
 }
 
 /** The top of a view: the program, what it is doing, and a word on its addresses. */
-export function ViewHeader({ command, stage, exited, run }: { command: string; stage: string; exited: boolean; run: number }) {
+export function ViewHeader({
+  command,
+  stage,
+  exited,
+  run,
+  hungUp = false,
+}: {
+  command: string;
+  stage: string;
+  exited: boolean;
+  run: number;
+  /** The program ended because its terminal was closed. */
+  hungUp?: boolean;
+}) {
   return (
     <>
       <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1 pb-2">
@@ -85,7 +98,16 @@ export function ViewHeader({ command, stage, exited, run }: { command: string; s
           new ones: this is run {run + 1}.
         </span>
       </div>
-      {exited && (
+      {exited && hungUp && (
+        <p className="mb-3 rounded-md border border-lab-line bg-lab-panel2 px-3 py-2 text-[12.5px] text-lab-ink/85">
+          The Terminal was closed while {command} ran. Closing it closed one end of the pseudo-terminal, and the kernel
+          hung up the other: it sent SIGHUP to bash, which passes it on to its jobs as it exits, and a read() from the
+          hung-up terminal returns end of file. Either way {command} ended, and the kernel took back every page. This
+          is how its memory looked last. Open the Terminal and type{" "}
+          <span className="font-mono text-signal">{command}</span> to run it again.
+        </p>
+      )}
+      {exited && !hungUp && (
         <p className="mb-3 rounded-md border border-lab-line bg-lab-panel2 px-3 py-2 text-[12.5px] text-lab-ink/85">
           The process has exited and the kernel has taken back every page. This is how its memory looked last.
           Type <span className="font-mono text-signal">{command}</span> in the Terminal to run it again.

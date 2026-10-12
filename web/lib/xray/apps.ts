@@ -82,7 +82,7 @@ export const CLOSED_WINDOWS: Record<WindowId, WindowStatus> = {
 
 const TERMINAL_BANNER = [
   { kind: "banner" as const, text: "Yanix terminal · commands are simulated, the kernel path is real" },
-  { kind: "hint" as const, text: "Try: cat notes.txt   ·   ./marks   ·   help" },
+  { kind: "hint" as const, text: "Try: ./marks  ·  ./cores  ·  cat notes.txt  ·  help" },
 ];
 
 /** Each app as it looks when it starts, without the window bookkeeping. */

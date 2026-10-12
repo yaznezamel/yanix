@@ -57,6 +57,8 @@ export interface ProgramState {
   inbuf: string;
   /** What the step changed, for the memory view to point out (see CHANGE). */
   changed: string[];
+  /** Its terminal was closed while it ran: the kernel hung up the pseudo-terminal, and it ended. */
+  hungUp?: boolean;
 }
 
 /**

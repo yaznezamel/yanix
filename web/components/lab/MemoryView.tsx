@@ -77,7 +77,7 @@ function MarksView({ program }: { program: ProgramState }) {
 
   return (
     <div ref={box} className="@container h-full overflow-y-auto px-3 pb-3">
-      <ViewHeader command="./marks" stage={STAGE[program.stage]} exited={exited} run={program.run} />
+      <ViewHeader command="./marks" stage={STAGE[program.stage]} exited={exited} run={program.run} hungUp={program.hungUp} />
       {/* One column when narrow; the source above the stack and the heap when wider; three columns when wide. */}
       <div
         className={`grid items-start gap-3 [grid-template-areas:'source'_'stack'_'heap'_'map'] @2xl:grid-cols-2 @2xl:[grid-template-areas:'source_source'_'stack_heap'_'map_map'] @5xl:grid-cols-[minmax(0,0.9fr)_minmax(0,1fr)_minmax(0,1fr)] @5xl:[grid-template-areas:'source_stack_heap'_'map_stack_heap'] ${

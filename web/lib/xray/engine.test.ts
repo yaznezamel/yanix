@@ -325,3 +325,45 @@ describe("machine state", () => {
     expect(state.machine.pageCache).toEqual([APPS.editor.program]);
   });
 });
+
+describe("typing into the terminal", () => {
+  const withTerminal: PlayerState = {
+    ...INITIAL_PLAYER,
+    apps: { ...INITIAL_APPS, windows: { ...INITIAL_APPS.windows, terminal: "open" } },
+  };
+  const lines = (state: PlayerState) => currentApps(state).terminal.lines.map((l) => l.text);
+
+  it("keeps a line typed during the terminal's trace in the TTY, and reads it when the trace is over", () => {
+    let state = run([{ type: "command", text: "./cores" }, { type: "command", text: "2" }], withTerminal);
+    expect(state.run?.scenario.title).toBe("./cores");
+    expect(state.typedAhead).toEqual(["2"]);
+    state = playerReducer(state, { type: "finish" });
+    // ./cores asked, and the line was waiting: it reads it at once.
+    expect(state.typedAhead).toEqual([]);
+    expect(state.run?.scenario.title).toBe("Threads: 2");
+    expect(state.run?.status).toBe("playing");
+  });
+
+  it("gives each waiting line to whoever reads next: the program, then bash once it has exited", () => {
+    let state = run([{ type: "command", text: "./cores" }, { type: "command", text: "0" }, { type: "command", text: "ls" }], withTerminal);
+    state = playerReducer(state, { type: "finish" });
+    expect(state.run?.scenario.title).toBe("Threads: 0");
+    expect(state.typedAhead).toEqual(["ls"]);
+    state = playerReducer(state, { type: "finish" });
+    expect(state.typedAhead).toEqual([]);
+    expect(lines(state).slice(-2)).toEqual(["ls", "Makefile  cores  cores.c  marks  marks.c  notes.txt"]);
+  });
+
+  it("prints bash's answers below what the last trace printed", () => {
+    const state = run([{ type: "command", text: "cat notes.txt" }, { type: "finish" }, { type: "command", text: "make" }], withTerminal);
+    const text = lines(state);
+    expect(text.indexOf("make")).toBeGreaterThan(text.indexOf("Notes to self:"));
+    expect(state.run).toBeNull();
+  });
+
+  it("throws the waiting lines away when the terminal closes", () => {
+    const state = run([{ type: "command", text: "./marks" }, { type: "command", text: "Ada" }, { type: "closeApp", app: "terminal" }], withTerminal);
+    expect(state.typedAhead).toEqual([]);
+    expect(currentApps(state).program).toBeNull();
+  });
+});

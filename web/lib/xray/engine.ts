@@ -1,5 +1,6 @@
 import { CLOSED_WINDOWS, COLD_MACHINE, FRESH_APPS, INITIAL_APPS } from "./apps";
 import { applyTrigger, buildScenario, machineAfter } from "./scenarios";
+import { command } from "./shell";
 import type {
   AppId,
   AppState,
@@ -45,6 +46,12 @@ export interface PlayerState {
   detail: Detail;
   speed: Speed;
   seq: number;
+  /**
+   * Lines typed into the terminal while its trace plays. Like typed-ahead
+   * input in a real TTY they wait, and are read one at a time once the trace
+   * is over: by the program if it waits for a line, else by bash.
+   */
+  typedAhead: string[];
 }
 
 export const INITIAL_PLAYER: PlayerState = {
@@ -54,6 +61,7 @@ export const INITIAL_PLAYER: PlayerState = {
   detail: "overview",
   speed: 1,
   seq: 0,
+  typedAhead: [],
 };
 
 export type PlayerAction =
@@ -74,6 +82,8 @@ export type PlayerAction =
   | { type: "closeApp"; app: AppId }
   | { type: "window"; id: WindowId; status: WindowStatus }
   | { type: "terminal"; append?: TermLine[]; clear?: boolean }
+  /** A line typed into the terminal and sent with Enter. */
+  | { type: "command"; text: string }
   | { type: "draft"; text: string }
   | { type: "editorText"; text: string }
   | { type: "media"; patch: Partial<MediaState> }
@@ -235,8 +245,11 @@ function editApps(state: PlayerState, field: UserField, fn: (apps: AppState) => 
   return mutateApps(state, fn);
 }
 
-/** The app quits: its window closes, its state resets, and any clipboard it owned is gone. */
-function closeApp(apps: AppState, app: AppId): AppState {
+/**
+ * The app quits: its window closes, its state resets, and any clipboard it
+ * owned is gone. `program` is the C program as it was on screen then.
+ */
+function closeApp(apps: AppState, app: AppId, program = apps.program): AppState {
   const next: AppState = {
     ...apps,
     windows: { ...apps.windows, [app]: "closed" },
@@ -245,9 +258,16 @@ function closeApp(apps: AppState, app: AppId): AppState {
   switch (app) {
     case "browser":
       return { ...next, browser: FRESH_APPS.browser };
-    case "terminal":
-      // Closing the terminal hangs up its pseudo-terminal, and a program running in it dies.
-      return { ...next, terminal: FRESH_APPS.terminal, program: null };
+    case "terminal": {
+      // Closing the terminal hangs up its pseudo-terminal, and a program running in it ends:
+      // the Memory tab keeps its last state and says why.
+      const running = program !== null && program.stage !== "starting" && program.stage !== "exited";
+      return {
+        ...next,
+        terminal: FRESH_APPS.terminal,
+        program: running ? { ...program, stage: "exited", hungUp: true, changed: [] } : null,
+      };
+    }
     case "editor":
       return { ...next, editor: FRESH_APPS.editor };
     case "player":
@@ -256,6 +276,17 @@ function closeApp(apps: AppState, app: AppId): AppState {
 }
 
 export function playerReducer(state: PlayerState, action: PlayerAction): PlayerState {
+  return settle(reduce(state, action));
+}
+
+/** Once nothing plays, the next line that waited in the TTY is read. */
+function settle(state: PlayerState): PlayerState {
+  const [line, ...rest] = state.typedAhead;
+  if (line === undefined || (state.run && state.run.status !== "done")) return state;
+  return playerReducer({ ...state, typedAhead: rest }, { type: "command", text: line });
+}
+
+function reduce(state: PlayerState, action: PlayerAction): PlayerState {
   const run = state.run;
   switch (action.type) {
     case "start": {
@@ -340,10 +371,13 @@ export function playerReducer(state: PlayerState, action: PlayerAction): PlayerS
     case "closeApp": {
       const machine =
         action.app === "browser" ? { ...state.machine, connectionOpen: false } : state.machine;
+      // Closing the terminal throws away what was typed into it.
+      const typedAhead = action.app === "terminal" ? [] : state.typedAhead;
       if (run && run.scenario.app === action.app) {
-        return { ...state, machine, run: null, apps: closeApp(committed(state), action.app) };
+        const apps = closeApp(committed(state), action.app, currentApps(state).program);
+        return { ...state, machine, typedAhead, run: null, apps };
       }
-      const next = mutateApps({ ...state, machine }, (apps) => closeApp(apps, action.app));
+      const next = mutateApps({ ...state, machine, typedAhead }, (apps) => closeApp(apps, action.app));
       return next.run && action.app === "browser"
         ? { ...next, run: { ...next.run, before: { ...next.run.before, connectionOpen: false } } }
         : next;
@@ -359,6 +393,19 @@ export function playerReducer(state: PlayerState, action: PlayerAction): PlayerS
       return editApps(state, "editor", (apps) => ({ ...apps, editor: { ...apps.editor, text: action.text } }));
     case "media":
       return editApps(state, "player", (apps) => ({ ...apps, player: { ...apps.player, ...action.patch } }));
+    case "command": {
+      // Typed while the terminal's trace plays: the line waits in the TTY until the trace is over.
+      if (run && run.status !== "done" && run.scenario.app === "terminal") {
+        return { ...state, typedAhead: [...state.typedAhead, action.text] };
+      }
+      const effect = command(action.text, committed(state));
+      if (effect.kind === "trace") return reduce(state, { type: "start", request: effect.request });
+      // bash answers at once, below what the last trace printed: that trace is over.
+      const settled = run && run.status === "done" ? { ...state, apps: committed(state), run: null } : state;
+      return effect.kind === "clear"
+        ? reduce(settled, { type: "terminal", clear: true })
+        : reduce(settled, { type: "terminal", append: effect.lines });
+    }
     case "terminal":
       return mutateApps(state, (apps) => ({
         ...apps,

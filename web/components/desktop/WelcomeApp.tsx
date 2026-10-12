@@ -29,8 +29,8 @@ const TRIES: { app: AppId; title: string; detail: string; icon: React.ReactNode 
   },
   {
     app: "terminal",
-    title: "Run a command",
-    detail: "cat notes.txt: a process, a pseudo-terminal and a read.",
+    title: "Run a program",
+    detail: "./marks: a C program's stack and heap. ./cores: threads on every core.",
     icon: <TerminalIcon className="size-7" />,
   },
 ];

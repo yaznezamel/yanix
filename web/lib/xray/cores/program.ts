@@ -108,6 +108,8 @@ export interface CoresState {
   inbuf: string;
   /** What the step changed, for the view to point out (see CORES_CHANGE). */
   changed: string[];
+  /** Its terminal was closed while it ran: the kernel hung up the pseudo-terminal, and it ended. */
+  hungUp?: boolean;
 }
 
 export const CORES_CHANGE = {
