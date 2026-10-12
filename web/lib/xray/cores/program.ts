@@ -1,5 +1,5 @@
 import { NO_HEAP, type Heap } from "../marks/heap";
-import { bytesOf, scanInts } from "../marks/program";
+import { bytesOf, scanInts, type Ending } from "../marks/program";
 import { MARKS, MAX_THREADS } from "./layout";
 
 // The state of examples/cores/cores.c while it runs in the lab: main()'s
@@ -18,10 +18,10 @@ export type CoresStage = "starting" | "running" | "threads" | "exited";
 
 /**
  * Where a thread is: being created (glibc has its stack and descriptor, the
- * kernel has no task yet), waiting for a core, running add_up(), finished, or
- * joined by main().
+ * kernel has no task yet), waiting for a core, running add_up(), finished,
+ * joined by main(), or killed with the whole process before it finished.
  */
-export type ThreadState = "new" | "queued" | "running" | "done" | "joined";
+export type ThreadState = "new" | "queued" | "running" | "done" | "joined" | "killed";
 
 export interface Worker {
   /** 1 to 4: the order main() created them in, as the program numbers them. */
@@ -108,8 +108,8 @@ export interface CoresState {
   inbuf: string;
   /** What the step changed, for the view to point out (see CORES_CHANGE). */
   changed: string[];
-  /** Its terminal was closed while it ran: the kernel hung up the pseudo-terminal, and it ended. */
-  hungUp?: boolean;
+  /** A signal ended it: its terminal hung up (closed while it ran), or Ctrl+C. */
+  endedBy?: Ending;
 }
 
 export const CORES_CHANGE = {

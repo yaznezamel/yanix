@@ -331,7 +331,11 @@ export type ScenarioRequest =
   /** ./marks or ./cores in the terminal: a C program starts. */
   | { kind: "runProgram"; program: "marks" | "cores" }
   /** A line typed into the running program. */
-  | { kind: "programInput"; text: string };
+  | { kind: "programInput"; text: string }
+  /** Ctrl+D at the start of a line while the program reads: the end of its input. */
+  | { kind: "programEof" }
+  /** Ctrl+C while a program runs in the terminal: SIGINT. */
+  | { kind: "interrupt" };
 
 export interface Scenario {
   kind: ScenarioRequest["kind"];

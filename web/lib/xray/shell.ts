@@ -9,6 +9,12 @@ import type { AppState, Program, ScenarioRequest, TermLine } from "./types";
 // the C program, when it is waiting in fgets(), or else bash, for which only
 // a few commands are traced and a few more answered in place.
 
+/**
+ * Ctrl+D, as it waits among typed-ahead lines: the byte the terminal sends,
+ * 0x04, which a terminal in canonical mode reads as the end of input.
+ */
+export const EOT = "\u0004";
+
 /** The longest line the program reads whole with one fgets(), in bytes. */
 export function inputLimit(program: Program | null): number {
   return program?.kind === "cores" ? MAX_THREADS_INPUT : MAX_INPUT_BYTES;
@@ -26,12 +32,37 @@ export function programAnswers(program: Program | null): string[] {
   return answers[program.stage] ?? [];
 }
 
+/** How a line that waits in the TTY looks: Ctrl+D shows as ^D. */
+export const shownLine = (line: string) => (line === EOT ? "^D" : line);
+
+/** The control keys the lab's terminal knows: what each sends, for a label. */
+export const CONTROL_KEYS = [
+  { key: "d", label: "Ctrl+D", what: "end of input" },
+  { key: "c", label: "Ctrl+C", what: "interrupt" },
+] as const;
+
+/** A key event that is Ctrl+C or Ctrl+D (and nothing else held), as the key it is. */
+export function controlKey(e: { ctrlKey: boolean; altKey: boolean; metaKey: boolean; shiftKey: boolean; key: string }): "c" | "d" | null {
+  if (!e.ctrlKey || e.altKey || e.metaKey || e.shiftKey) return null;
+  const key = e.key.toLowerCase();
+  return key === "c" || key === "d" ? key : null;
+}
+
 /** A line's effect: a trace to start, or lines bash prints at once (or a cleared screen). */
 export type Command = { kind: "trace"; request: ScenarioRequest } | { kind: "print"; lines: TermLine[] } | { kind: "clear" };
 
 export function command(raw: string, apps: AppState): Command {
   // While the program reads, the line goes to it as typed: spaces and all.
   const program = apps.program;
+  if (raw === EOT) {
+    if (programReads(program)) return { kind: "trace", request: { kind: "programEof" } };
+    return {
+      kind: "print",
+      lines: [
+        { kind: "hint", text: "Ctrl+D at bash's prompt ends bash's input: bash would exit, and the terminal with it. The lab keeps it open." },
+      ],
+    };
+  }
   if (programReads(program)) {
     return { kind: "trace", request: { kind: "programInput", text: fitInput(raw, inputLimit(program)) } };
   }

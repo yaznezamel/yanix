@@ -135,7 +135,7 @@ describe("a session with ./marks", () => {
 
   it("ends with its terminal, which hangs up: the Memory tab keeps its last state", () => {
     const closed = playerReducer(states[1]!, { type: "closeApp", app: "terminal" });
-    expect(currentApps(closed).program).toMatchObject({ kind: "marks", stage: "exited", hungUp: true, changed: [] });
+    expect(currentApps(closed).program).toMatchObject({ kind: "marks", stage: "exited", endedBy: "hangup", changed: [] });
     expect(currentApps(closed).terminal.lines.some((l) => l.text.includes("Student name"))).toBe(false);
   });
 });

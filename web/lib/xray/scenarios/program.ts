@@ -47,6 +47,16 @@ export const CODE = {
   ttyWrite: { project: "linux", path: "drivers/tty/n_tty.c", symbol: "n_tty_write" },
   ttyRead: { project: "linux", path: "drivers/tty/n_tty.c", symbol: "n_tty_read" },
   canonCopy: { project: "linux", path: "drivers/tty/n_tty.c", symbol: "canon_copy_from_read_buf" },
+  canonChar: { project: "linux", path: "drivers/tty/n_tty.c", symbol: "n_tty_receive_char_canon" },
+  lineEnd: { project: "linux", path: "drivers/tty/n_tty.c", symbol: "n_tty_receive_handle_newline" },
+  specialChar: { project: "linux", path: "drivers/tty/n_tty.c", symbol: "n_tty_receive_char_special" },
+  isig: { project: "linux", path: "drivers/tty/n_tty.c", symbol: "isig" },
+  killPgrp: { project: "linux", path: "kernel/signal.c", symbol: "kill_pgrp" },
+  completeSignal: { project: "linux", path: "kernel/signal.c", symbol: "complete_signal" },
+  signalWake: { project: "linux", path: "kernel/signal.c", symbol: "signal_wake_up_state" },
+  kick: { project: "linux", path: "kernel/sched/core.c", symbol: "kick_process" },
+  signalReturn: { project: "linux", path: "arch/x86/kernel/signal.c", symbol: "arch_do_signal_or_restart" },
+  getSignal: { project: "linux", path: "kernel/signal.c", symbol: "get_signal" },
   receive: { project: "linux", path: "drivers/tty/n_tty.c", symbol: "n_tty_receive_buf_common" },
   echo: { project: "linux", path: "drivers/tty/n_tty.c", symbol: "echo_char" },
   ptyWrite: { project: "linux", path: "drivers/tty/pty.c", symbol: "pty_write" },
@@ -360,6 +370,170 @@ export function waitSteps<S extends Program>(
   );
 }
 
+/**
+ * Ctrl+D at the start of a line: the end of input. The program wakes as it
+ * does for a line, but read() returns 0 and fgets() returns NULL.
+ */
+export function eofSteps<S extends Program>(t: Tracer<S>, line: number, stdin: string, waking: Partial<S> = {}): void {
+  t.add(keysStep("key", "terminal", "You press Ctrl+D", "Terminal"), shared({ at: line }));
+  t.add(
+    {
+      id: "eof",
+      phase: "input",
+      path: ["terminal", "syscall", "tty"],
+      title: "Ctrl+D: the end of input",
+      body: "The terminal writes one byte, 0x04, into its end of the pseudo-terminal. In canonical mode that byte is VEOF, and the line discipline neither stores it nor echoes it: it ends the line where it is, as Enter does but with no newline, and wakes whoever waits to read. Nothing was typed before it, so the line is empty.",
+      code: [CODE.ptyWrite, CODE.canonChar, CODE.lineEnd],
+      timescale: "us",
+    },
+    shared({ at: line }),
+  );
+  t.add(
+    {
+      id: "wake",
+      phase: "input",
+      path: ["tty", "sched", PROGRAM],
+      title: "The reader wakes",
+      body: "The scheduler marks the program runnable and soon puts it back on a core, inside read(), where it went to sleep.",
+      code: [CODE.wake],
+      timescale: "us",
+    },
+    { ...waking, ...shared<S>({ stage: "running", at: line }) },
+  );
+  t.add(
+    {
+      id: "read",
+      phase: "input",
+      path: ["tty", "syscall", "glibc"],
+      frames: [
+        dataFrame(0, "System call", "read() returns 0", syscall("read(0, …)", [
+          { name: "File descriptor", value: "0: standard input, the pseudo-terminal" },
+          { name: "Into", value: `${stdin}: stdin's buffer` },
+          { name: "Asked for", value: "up to 1024 bytes" },
+          { name: "Returns", value: "0: end of file" },
+        ])),
+      ],
+      title: "read() returns 0",
+      body: "n_tty_read() finds the end of a line with no bytes before it, so read() returns 0. That is not an error: 0 bytes is how read() says end of file, and for a terminal it lasts only for this read(). fgets() has read nothing at all, so it leaves line[] as it was, sets stdin's end-of-file flag and returns NULL.",
+      code: [CODE.ttyRead, CODE.canonCopy, CODE.read],
+      timescale: "us",
+    },
+    shared({ inbuf: "", at: line }),
+    ["stdin"],
+  );
+}
+
+export interface Interrupted {
+  /** The program's name in sentences, e.g. "./marks". */
+  name: string;
+  /** The line of C where it was. */
+  line: number;
+  /** Its threads asleep, and where: "main(), asleep in read()". */
+  sleeping: string[];
+  /** Its threads on a core: "thread 2" on core 2. */
+  running: { what: string; core: number }[];
+  /** Its threads that are runnable but have no core yet. */
+  waiting: string[];
+  /** What else changes in its state as its threads die, e.g. no frames left. */
+  patch: Partial<Program>;
+  /** What the C program never got to do, for the exit step. */
+  undone: string;
+}
+
+/**
+ * Ctrl+C: the line discipline sends SIGINT to the foreground process group.
+ * The program sets no handler, so the default action ends the whole process,
+ * whatever its threads were doing.
+ */
+export function interruptSteps<S extends Program>(t: Tracer<S>, o: Interrupted): void {
+  const cores = o.running.map((r) => r.core);
+  t.add(keysStep("key", "terminal", "You press Ctrl+C", "Terminal"), shared({ at: o.line }));
+  t.add(
+    {
+      id: "intr",
+      phase: "input",
+      path: ["terminal", "syscall", "tty", "proc"],
+      title: "Ctrl+C: SIGINT",
+      body: `The terminal writes one byte, 0x03, into its end of the pseudo-terminal. ISIG is set, so the line discipline takes it as VINTR, the interrupt character, and never stores it for read(): isig() sends SIGINT to the terminal's foreground process group, which is ${o.name}, throws away whatever was typed but not read yet, and echoes ^C.`,
+      code: [CODE.ptyWrite, CODE.specialChar, CODE.isig, CODE.killPgrp],
+      timescale: "us",
+    },
+    shared({ at: o.line }),
+  );
+  const asleep = o.sleeping.length > 0 ? ` The kernel wakes ${list(o.sleeping)}.` : "";
+  const busy =
+    o.running.length > 0
+      ? ` ${list(o.running.map((r) => `${r.what} on core ${r.core}`))} ${o.running.length === 1 ? "is" : "are"} running: kick_process() interrupts ${o.running.length === 1 ? "that core" : "each of those cores"} with an inter-processor interrupt, so it enters the kernel.`
+      : "";
+  const queued =
+    o.waiting.length > 0
+      ? ` ${list(o.waiting)} ${o.waiting.length === 1 ? "has" : "have"} no core yet, and will meet the signal as soon as ${o.waiting.length === 1 ? "it gets one" : "they get one"}.`
+      : "";
+  t.add(
+    {
+      id: "deliver",
+      phase: "launch",
+      path: ["proc", "sched", PROGRAM],
+      cores: cores.length > 0 ? cores : undefined,
+      title: "The default action: the end",
+      body: `${o.name} sets no handler for SIGINT, so the default action applies, and for SIGINT that is to end the process. complete_signal() marks the whole process as exiting and queues SIGKILL for each of its threads.${asleep}${busy}${queued} Each thread meets the signal on its way back to user mode, in get_signal(), and goes no further.`,
+      code: [CODE.killPgrp, CODE.completeSignal, CODE.signalWake, ...(o.running.length > 0 ? [CODE.kick] : []), CODE.signalReturn, CODE.getSignal],
+      timescale: "us",
+    },
+    shared({ stage: "running", at: o.line }),
+  );
+  t.add(
+    {
+      id: "exit",
+      phase: "launch",
+      path: ["proc"],
+      title: "do_group_exit(): no way back",
+      body: `get_signal() calls do_group_exit(), and each thread runs do_exit() inside the kernel. Nothing in ${o.name} runs again: ${o.undone}`,
+      code: [CODE.getSignal, CODE.groupExit, CODE.doExit],
+      timescale: "us",
+    },
+    { ...o.patch, ...shared<S>({ at: o.line }) } as Partial<S>,
+    ["frame:main"],
+  );
+  exitMmStep(t, o.name, o.line, " Pages the program never handed back with free() or munmap() come back all the same.");
+  bashStep(t, o.name, "killed by SIGINT", "It prints a new prompt on a new line, after the ^C the terminal echoed.");
+}
+
+/** "a", "a and b", "a, b and c". */
+function list(items: string[]): string {
+  return items.length <= 1 ? (items[0] ?? "") : `${items.slice(0, -1).join(", ")} and ${items.at(-1)}`;
+}
+
+/** The address space goes: every area unmapped, every page freed. */
+function exitMmStep<S extends Program>(t: Tracer<S>, name: string, line: number, extra: string): void {
+  t.add(
+    {
+      id: "exit-mm",
+      phase: "memory",
+      path: ["proc", "mm", "ram"],
+      title: "The whole address space goes",
+      body: `exit_mm() lets go of the process's memory. ${name} was its only user, so exit_mmap() unmaps every area and frees every page: the heap's, the stacks', the data's.${extra} The kernel never knew about chunks or the C library's lists. It hands out pages and takes them back; the C library does the rest.`,
+      code: [CODE.exitMm, CODE.exitMmap],
+      timescale: "us",
+    },
+    shared({ stage: "exited", at: line }),
+  );
+}
+
+/** bash, waiting in wait4() since it started the program, gets its status. */
+function bashStep<S extends Program>(t: Tracer<S>, name: string, status: string, then: string): void {
+  t.add({
+    id: "bash",
+    phase: "output",
+    path: ["proc", "bash"],
+    title: "bash takes over",
+    body: `bash has been waiting in wait4() since it started ${name}. It collects the exit status, ${status}. ${then}`,
+    code: [CODE.wait4],
+    timescale: "us",
+    ui: { terminalBusy: false },
+  });
+}
+
 /** The end of a program: exit_group(), the address space torn down, bash's prompt. */
 export function exitSteps<S extends Program>(t: Tracer<S>, name: string, line: number, patch: Partial<S>, extra: string): void {
   t.add(
@@ -375,26 +549,6 @@ export function exitSteps<S extends Program>(t: Tracer<S>, name: string, line: n
     { ...patch, ...shared<S>({ at: line }) },
     ["frame:main"],
   );
-  t.add(
-    {
-      id: "exit-mm",
-      phase: "memory",
-      path: ["proc", "mm", "ram"],
-      title: "The whole address space goes",
-      body: `exit_mm() lets go of the process's memory. ${name} was its only user, so exit_mmap() unmaps every area and frees every page: the heap's, the stacks', the data's. The kernel never knew about chunks or the C library's lists. It hands out pages and takes them back; the C library does the rest.`,
-      code: [CODE.exitMm, CODE.exitMmap],
-      timescale: "us",
-    },
-    shared({ stage: "exited", at: line }),
-  );
-  t.add({
-    id: "bash",
-    phase: "output",
-    path: ["proc", "bash"],
-    title: "bash takes over",
-    body: `bash has been waiting in wait4() since it started ${name}. It collects the exit status, 0, and prints a new prompt.`,
-    code: [CODE.wait4],
-    timescale: "us",
-    ui: { terminalBusy: false },
-  });
+  exitMmStep(t, name, line, "");
+  bashStep(t, name, "0", "It prints a new prompt.");
 }

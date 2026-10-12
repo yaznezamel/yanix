@@ -4,7 +4,7 @@ import { useEffect, useRef } from "react";
 import { finePointer } from "@/components/desktop/TerminalApp";
 import { SUGGESTED_QUERIES } from "@/lib/xray/apps";
 import { programReads } from "@/lib/xray/scenarios";
-import { inputLimit, programAnswers } from "@/lib/xray/shell";
+import { CONTROL_KEYS, controlKey, inputLimit, programAnswers, shownLine } from "@/lib/xray/shell";
 import type { AppId, AppState, Program, ScenarioRequest, TermLine } from "@/lib/xray/types";
 
 // On a phone the simulated screen is too small to tap, so the same actions are
@@ -26,6 +26,8 @@ interface QuickActionsProps {
   playing: string | null;
   onRequest: (request: ScenarioRequest) => void;
   onCommand: (command: string) => void;
+  /** Ctrl+C or Ctrl+D, typed into the program's answer box or pressed as a button. */
+  onControl: (key: "c" | "d") => void;
   onFinish: () => void;
   /** Called after an action starts a trace, to bring its story into view. */
   onStarted: () => void;
@@ -222,6 +224,7 @@ function ProgramInput({
   toQuestion,
   playing,
   onCommand,
+  onControl,
   onFinish,
   onStarted,
 }: QuickActionsProps & { program: Program }) {
@@ -235,7 +238,7 @@ function ProgramInput({
   const said =
     question ??
     (typedAhead.length > 0
-      ? `Waiting in the TTY: ${typedAhead.join(" · ")}`
+      ? `Waiting in the TTY: ${typedAhead.map(shownLine).join(" · ")}`
       : reading
         ? "reading a line"
         : "type ahead, and your line waits in the TTY until it reads");
@@ -257,6 +260,29 @@ function ProgramInput({
     if (fromField) inputRef.current?.focus({ preventScroll: true });
     else keyboard();
   }
+
+  function control(key: "c" | "d", fromField: boolean) {
+    onControl(key);
+    onStarted();
+    if (fromField) inputRef.current?.focus({ preventScroll: true });
+    else keyboard();
+  }
+
+  const keys = (
+    <span className="flex shrink-0 items-center gap-1.5">
+      {CONTROL_KEYS.map((k) => (
+        <button
+          key={k.key}
+          type="button"
+          title={`${k.label}: ${k.what}`}
+          onClick={() => control(k.key, false)}
+          className="min-h-9 whitespace-nowrap rounded-md border border-lab-line bg-lab-panel2 px-2 text-[12px] text-lab-ink/85 xl:min-h-6 xl:py-0.5"
+        >
+          <span className="font-mono">{k.label}</span> <span className="text-lab-muted">{k.what}</span>
+        </button>
+      ))}
+    </span>
+  );
 
   return (
     <section
@@ -283,19 +309,22 @@ function ProgramInput({
             {output.join("\n")}
           </pre>
         )}
-        <label
-          htmlFor="program-answer"
-          title={question ?? undefined}
-          className={`font-mono text-[13px] xl:truncate ${question ? "text-lab-ink" : "text-lab-muted"}`}
-        >
-          <span className="hidden text-lab-muted xl:inline">
-            ./{name} {reading ? "asks" : "is running"}:{" "}
-          </span>
-          {said}
-          {name === "marks" && reading && (
-            <span className="text-lab-muted"> · to finish, answer n when it asks for another</span>
-          )}
-        </label>
+        <div className="flex items-center gap-3">
+          <label
+            htmlFor="program-answer"
+            title={question ?? undefined}
+            className={`min-w-0 flex-1 font-mono text-[13px] xl:truncate ${question ? "text-lab-ink" : "text-lab-muted"}`}
+          >
+            <span className="hidden text-lab-muted xl:inline">
+              ./{name} {reading ? "asks" : "is running"}:{" "}
+            </span>
+            {said}
+            {name === "marks" && reading && (
+              <span className="text-lab-muted"> · to finish, answer n when it asks for another</span>
+            )}
+          </label>
+          <span className="hidden xl:flex">{keys}</span>
+        </div>
         <div className="flex flex-col gap-2 xl:flex-row xl:items-center xl:gap-2.5">
           <div className="flex gap-2 xl:min-w-0 xl:flex-1">
             <input
@@ -305,6 +334,14 @@ function ProgramInput({
               autoComplete="off"
               spellCheck={false}
               maxLength={inputLimit(program)}
+              onKeyDown={(e) => {
+                const key = controlKey(e);
+                const field = e.currentTarget;
+                if (key === null || (key === "c" && field.selectionStart !== field.selectionEnd)) return;
+                e.preventDefault();
+                if (key === "c") field.value = "";
+                if (key === "c" || field.value === "") control(key, true);
+              }}
               className="min-h-11 min-w-0 flex-1 rounded-lg border border-lab-line bg-lab-panel2 px-3 font-mono text-[14px] text-lab-ink outline-none focus:border-signal/60 focus-visible:ring-2 focus-visible:ring-signal/40 xl:min-h-9"
             />
             <button
@@ -342,6 +379,10 @@ function ProgramInput({
               </div>
             )
           )}
+        </div>
+        <div className="flex flex-wrap items-center gap-2 xl:hidden">
+          <span className="text-[12px] text-lab-muted">Or press</span>
+          {keys}
         </div>
       </form>
     </section>

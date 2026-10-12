@@ -25,7 +25,9 @@ import {
   CODE as C,
   MEMORY,
   PROGRAM,
+  eofSteps,
   exitSteps,
+  interruptSteps,
   promptStep,
   quoted,
   startSteps,
@@ -64,6 +66,9 @@ const LINE = {
   store: at("students[count++] = s;"),
   promptAgain: at('printf("Add another student?'),
   fgetsAgain: at("if (!fgets(line, sizeof line, stdin) || (line[0]"),
+  breakName: at("break;", lineOf("if (!fgets(line, sizeof line, stdin))")),
+  freeName: at("free(s.name);"),
+  breakAgain: at("break;", lineOf("if (!fgets(line, sizeof line, stdin) || (line[0]")),
   sum: at("sum += marks[i];"),
   divide: at("return (double)sum / n;"),
   printRow: at('printf("%-12s'),
@@ -639,7 +644,7 @@ function finishSteps(t: Tracer): void {
             { name: "Count", value: String(bytesOf(`${rows[0]}\n`).length) },
           ]))]
         : undefined,
-      title: rows.length === 1 ? "The row is printed" : `${rows.length} rows, ${rows.length} write() calls`,
+      title: rows.length === 0 ? "No rows to print" : rows.length === 1 ? "The row is printed" : `${rows.length} rows, ${rows.length} write() calls`,
       body:
         rows.length === 0
           ? "No students, so the loops do nothing."
@@ -671,8 +676,11 @@ function finishSteps(t: Tracer): void {
       phase: "memory",
       path: [PROGRAM, "glibc"],
       parts: MEMORY,
-      title: "free(): back to the tcache",
-      body: `free() puts each name's chunk, then the array's, ${allTcache ? "in the tcache" : "in the tcache while its list has room, otherwise in another free list"}: one list per chunk size, newest first, up to 7 each. The chunks stay part of the heap, their first 16 bytes now the list's links. free() almost never gives memory back to the kernel: a later malloc() would reuse these chunks.`,
+      title: list.length === 0 ? "free(NULL)" : "free(): back to the tcache",
+      body:
+        list.length === 0
+          ? "No student was stored, so the loop frees no name, and students is still NULL: free(NULL) does nothing at all, as the C standard says it must."
+          : `free() puts each name's chunk, then the array's, ${allTcache ? "in the tcache" : "in the tcache while its list has room, otherwise in another free list"}: one list per chunk size, newest first, up to 7 each. The chunks stay part of the heap, their first 16 bytes now the list's links. free() almost never gives memory back to the kernel: a later malloc() would reuse these chunks.`,
       code: [C.free, C.tcachePut],
       timescale: "ns",
     },
@@ -694,6 +702,82 @@ export function runMarks(apps: AppState): Scenario {
   const t = tracer<ProgramState>(startProgram(previous + 1));
   runSteps(t);
   return { kind: "runProgram", app: "terminal", title: "./marks", focus: "split", steps: t.steps };
+}
+
+// ---------------------------------------------------------------- Ctrl+D and Ctrl+C
+
+/** Ctrl+D while ./marks waits for a line: fgets() returns NULL, and main() leaves its loop as for n. */
+export function marksEof(program: ProgramState): Scenario {
+  const t = tracer<ProgramState>({ ...program, changed: [] });
+  const stage = program.stage;
+  eofSteps(t, stage === "name" ? LINE.fgetsName : stage === "marks" ? LINE.fgetsMarks : LINE.fgetsAgain, stdinBuffer(t));
+  if (stage === "marks") {
+    t.add(
+      {
+        id: "return",
+        phase: "app",
+        path: [PROGRAM],
+        parts: ALU,
+        title: "read_marks() returns -1",
+        body: "fgets() returned NULL, so read_marks() returns -1 at once, as its comment promises for the end of input. main() stores -1 in got: the while loop stops, since -1 is not 0.",
+        timescale: "ns",
+      },
+      { callee: null, got: -1, at: LINE.callReadMarks },
+      [CHANGE.callee, CHANGE.got],
+    );
+    const name = t.state.s.name;
+    if (name !== null && name !== 0) {
+      const freed = free(t.state.heap, name - HEADER);
+      t.add(
+        {
+          id: "free-name",
+          phase: "memory",
+          path: [PROGRAM, "glibc"],
+          parts: MEMORY,
+          title: "free(s.name), then break",
+          body: `got < 0: no student will hold the name strdup() copied, so main() frees it before break leaves the loop. Its chunk goes to the ${freed.to === "tcache" ? "tcache" : "free lists"}, and s.name keeps the old address: a dangling pointer, which nothing uses again.`,
+          code: [C.free, C.tcachePut],
+          timescale: "ns",
+        },
+        { heap: freed.heap, at: LINE.freeName },
+        [chunkKey(name - HEADER), CHANGE.tcache],
+      );
+    }
+  } else {
+    t.add(
+      {
+        id: "break",
+        phase: "app",
+        path: [PROGRAM],
+        parts: ALU,
+        title: "fgets() returned NULL: break",
+        body:
+          stage === "name"
+            ? "main() tests what fgets() returned: NULL, so break leaves the loop before strdup(). line[] keeps what it held."
+            : "fgets() returned NULL, so the condition is true without even looking at line[0]: break leaves the loop, as n does.",
+        timescale: "ns",
+      },
+      { at: stage === "name" ? LINE.breakName : LINE.breakAgain },
+    );
+  }
+  finishSteps(t);
+  return { kind: "programEof", app: "terminal", title: "Ctrl+D: end of input", focus: "split", steps: t.steps };
+}
+
+/** Ctrl+C while ./marks runs: SIGINT ends it wherever it is, without a free() or a return from main(). */
+export function marksInterrupt(program: ProgramState): Scenario {
+  const t = tracer<ProgramState>({ ...program, changed: [] });
+  const asleep = program.stage !== "running";
+  interruptSteps(t, {
+    name: "./marks",
+    line: program.at,
+    sleeping: asleep ? ["main(), asleep in read()"] : [],
+    running: asleep ? [] : [{ what: "./marks", core: 0 }],
+    waiting: [],
+    patch: { inMain: false, callee: null, endedBy: "interrupt" },
+    undone: "main() never returns, and neither free() nor exit() runs, so the C library tidies up nothing.",
+  });
+  return { kind: "interrupt", app: "terminal", title: "Ctrl+C: SIGINT", focus: "split", steps: t.steps };
 }
 
 /** A line typed while ./marks waits for a name, marks, or y or n. */

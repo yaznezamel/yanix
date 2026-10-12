@@ -77,7 +77,7 @@ function MarksView({ program }: { program: ProgramState }) {
 
   return (
     <div ref={box} className="@container h-full overflow-y-auto px-3 pb-3">
-      <ViewHeader command="./marks" stage={STAGE[program.stage]} exited={exited} run={program.run} hungUp={program.hungUp} />
+      <ViewHeader command="./marks" stage={STAGE[program.stage]} exited={exited} run={program.run} endedBy={program.endedBy} />
       {/* One column when narrow; the source above the stack and the heap when wider; three columns when wide. */}
       <div
         className={`grid items-start gap-3 [grid-template-areas:'source'_'stack'_'heap'_'map'] @2xl:grid-cols-2 @2xl:[grid-template-areas:'source_source'_'stack_heap'_'map_map'] @5xl:grid-cols-[minmax(0,0.9fr)_minmax(0,1fr)_minmax(0,1fr)] @5xl:[grid-template-areas:'source_stack_heap'_'map_stack_heap'] ${
@@ -208,9 +208,11 @@ function Stack({ program, layout, changed }: { program: ProgramState; layout: La
     return (
       <Panel title="Stack" sub="grows down ↓" lit={changed.has(CHANGE.main)}>
         <p className="px-2.5 py-2 text-[12.5px] text-lab-muted">
-          {program.at > 0
-            ? "main() has returned: no frame is left."
-            : "main() has not started yet: the stack holds the program's arguments, its environment and the C library's start-up frames."}
+          {program.endedBy
+            ? "main() never returned: a signal ended the process, and its stack went with it."
+            : program.at > 0
+              ? "main() has returned: no frame is left."
+              : "main() has not started yet: the stack holds the program's arguments, its environment and the C library's start-up frames."}
         </p>
       </Panel>
     );

@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef } from "react";
-import { cString, textOf } from "@/lib/xray/marks/program";
+import { cString, textOf, type Ending } from "@/lib/xray/marks/program";
 
 // Pieces the Memory tab's views share: a panel, a stack frame's rows, the
 // source with the current line, and a strip of bytes. Values the program has
@@ -75,14 +75,14 @@ export function ViewHeader({
   stage,
   exited,
   run,
-  hungUp = false,
+  endedBy,
 }: {
   command: string;
   stage: string;
   exited: boolean;
   run: number;
-  /** The program ended because its terminal was closed. */
-  hungUp?: boolean;
+  /** The signal that ended the program, if one did. */
+  endedBy?: Ending;
 }) {
   return (
     <>
@@ -98,7 +98,7 @@ export function ViewHeader({
           new ones: this is run {run + 1}.
         </span>
       </div>
-      {exited && hungUp && (
+      {exited && endedBy === "hangup" && (
         <p className="mb-3 rounded-md border border-lab-line bg-lab-panel2 px-3 py-2 text-[12.5px] text-lab-ink/85">
           The Terminal was closed while {command} ran. Closing it closed one end of the pseudo-terminal, and the kernel
           hung up the other: it sent SIGHUP to bash, which passes it on to its jobs as it exits, and a read() from the
@@ -107,7 +107,14 @@ export function ViewHeader({
           <span className="font-mono text-signal">{command}</span> to run it again.
         </p>
       )}
-      {exited && !hungUp && (
+      {exited && endedBy === "interrupt" && (
+        <p className="mb-3 rounded-md border border-lab-line bg-lab-panel2 px-3 py-2 text-[12.5px] text-lab-ink/85">
+          Ctrl+C sent SIGINT, and its default action ended the process: main() never returned, and no free() ran,
+          but the kernel took back every page all the same. This is how its memory looked last. Type{" "}
+          <span className="font-mono text-signal">{command}</span> in the Terminal to run it again.
+        </p>
+      )}
+      {exited && endedBy === undefined && (
         <p className="mb-3 rounded-md border border-lab-line bg-lab-panel2 px-3 py-2 text-[12.5px] text-lab-ink/85">
           The process has exited and the kernel has taken back every page. This is how its memory looked last.
           Type <span className="font-mono text-signal">{command}</span> in the Terminal to run it again.

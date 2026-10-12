@@ -202,6 +202,11 @@ export function DesktopLab() {
     start({ type: "start", request: req });
   }
 
+  /** Ctrl+C or Ctrl+D, from the terminal or the answer bar. */
+  function handleControl(key: "c" | "d") {
+    start({ type: "control", key });
+  }
+
   /** To the end of the trace, where the program asks; the answer box takes the keyboard. */
   function skipToQuestion() {
     dispatch({ type: "finish" });
@@ -372,6 +377,7 @@ export function DesktopLab() {
                   onSearch={(query) => request({ kind: "search", query })}
                   onDraft={(text) => dispatch({ type: "draft", text })}
                   onCommand={handleCommand}
+                  onControl={handleControl}
                   onOpenFile={() => request({ kind: "openFile" })}
                   onEditorText={(text) => dispatch({ type: "editorText", text })}
                   onKeystroke={handleKeystroke}
@@ -391,6 +397,7 @@ export function DesktopLab() {
               playing={active ? (run?.scenario.title ?? null) : null}
               onRequest={request}
               onCommand={handleCommand}
+              onControl={handleControl}
               onFinish={skipToQuestion}
               onStarted={showStory}
             />

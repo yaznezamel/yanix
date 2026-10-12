@@ -317,7 +317,7 @@ describe("both programs in one terminal", () => {
 
     const closed = playerReducer(play(state, { kind: "programInput", text: "2" }), { type: "closeApp", app: "terminal" });
     // The Memory tab keeps its last state, and says that the terminal hung up.
-    expect(currentApps(closed).program).toMatchObject({ kind: "cores", stage: "exited", hungUp: true });
+    expect(currentApps(closed).program).toMatchObject({ kind: "cores", stage: "exited", endedBy: "hangup" });
     // A program bash had not started yet just never runs.
     const early = playerReducer(playerReducer(state, { type: "start", request: { kind: "runProgram", program: "marks" } }), {
       type: "closeApp",

@@ -8,6 +8,9 @@ import { HEADER, NO_HEAP, PAGE, type Heap } from "./heap";
 // A null value is memory the program has not written: whatever bytes were
 // there before. C does not clear locals, and neither does this model.
 
+/** The signal that ended a program, if one did: its terminal hung up, or Ctrl+C. */
+export type Ending = "hangup" | "interrupt";
+
 /** What the program is doing: not started yet, running, blocked in fgets() waiting for a name, marks or y/n, or gone. */
 export type Stage = "starting" | "running" | "name" | "marks" | "again" | "exited";
 
@@ -57,8 +60,8 @@ export interface ProgramState {
   inbuf: string;
   /** What the step changed, for the memory view to point out (see CHANGE). */
   changed: string[];
-  /** Its terminal was closed while it ran: the kernel hung up the pseudo-terminal, and it ended. */
-  hungUp?: boolean;
+  /** A signal ended it: its terminal hung up (closed while it ran), or Ctrl+C. */
+  endedBy?: Ending;
 }
 
 /**

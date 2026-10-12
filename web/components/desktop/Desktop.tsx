@@ -74,6 +74,7 @@ interface DesktopProps {
   onSearch: (query: string) => void;
   onDraft: (text: string) => void;
   onCommand: (command: string) => void;
+  onControl: (key: "c" | "d") => void;
   onOpenFile: () => void;
   onEditorText: (text: string) => void;
   onKeystroke: (app: TextApp, key: string) => void;
@@ -233,6 +234,7 @@ export function Desktop(props: DesktopProps) {
                   program={apps.program}
                   typedAhead={props.typedAhead}
                   onCommand={props.onCommand}
+                  onControl={props.onControl}
                 />
               )}
               {id === "editor" && (

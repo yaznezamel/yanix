@@ -1,6 +1,6 @@
 import { CLOSED_WINDOWS, COLD_MACHINE, FRESH_APPS, INITIAL_APPS } from "./apps";
 import { applyTrigger, buildScenario, machineAfter } from "./scenarios";
-import { command } from "./shell";
+import { EOT, command } from "./shell";
 import type {
   AppId,
   AppState,
@@ -84,6 +84,8 @@ export type PlayerAction =
   | { type: "terminal"; append?: TermLine[]; clear?: boolean }
   /** A line typed into the terminal and sent with Enter. */
   | { type: "command"; text: string }
+  /** Ctrl+C or Ctrl+D typed into the terminal. */
+  | { type: "control"; key: "c" | "d" }
   | { type: "draft"; text: string }
   | { type: "editorText"; text: string }
   | { type: "media"; patch: Partial<MediaState> }
@@ -265,7 +267,7 @@ function closeApp(apps: AppState, app: AppId, program = apps.program): AppState 
       return {
         ...next,
         terminal: FRESH_APPS.terminal,
-        program: running ? { ...program, stage: "exited", hungUp: true, changed: [] } : null,
+        program: running ? { ...program, stage: "exited", endedBy: "hangup", changed: [] } : null,
       };
     }
     case "editor":
@@ -277,6 +279,50 @@ function closeApp(apps: AppState, app: AppId, program = apps.program): AppState 
 
 export function playerReducer(state: PlayerState, action: PlayerAction): PlayerState {
   return settle(reduce(state, action));
+}
+
+/** A trace starts from these apps and this machine; the scenario's steps decide what it learns. */
+function begin(state: PlayerState, request: ScenarioRequest, apps: AppState, machine: MachineState): PlayerState {
+  const scenario = buildScenario(request, machine, apps);
+  const seq = state.seq + 1;
+  return {
+    ...state,
+    seq,
+    apps,
+    machine: machineAfter(scenario, machine),
+    run: {
+      seq,
+      replay: 0,
+      scenario,
+      index: 0,
+      status: "playing",
+      base: applyTrigger(request, apps),
+      before: machine,
+    },
+  };
+}
+
+/** bash prints at once, below what the last trace printed: that trace is over. */
+function print(state: PlayerState, action: PlayerAction & { type: "terminal" }): PlayerState {
+  const run = state.run;
+  const settled = run && run.status === "done" ? { ...state, apps: committed(state), run: null } : state;
+  return reduce(settled, action);
+}
+
+/**
+ * Ctrl+C. The line discipline sends SIGINT at once, so a program's trace is
+ * cut where the playhead is and the interrupt starts from there; the line
+ * typed so far, and any waiting ones, are thrown away. At bash's prompt the
+ * TTY echoes ^C and bash prints a new prompt.
+ */
+function interrupt(state: PlayerState): PlayerState {
+  const run = state.run;
+  const cut = run !== null && run.status !== "done" && run.scenario.app === "terminal";
+  const apps = cut ? currentApps(state) : committed(state);
+  const program = apps.program;
+  const runs = program !== null && program.stage !== "starting" && program.stage !== "exited";
+  if (!runs) return cut ? state : print(state, { type: "terminal", append: [{ kind: "prompt", text: "^C" }] });
+  return begin({ ...state, typedAhead: [] }, { kind: "interrupt" }, apps, cut ? machineAt(state) : state.machine);
 }
 
 /** Once nothing plays, the next line that waited in the TTY is read. */
@@ -293,23 +339,7 @@ function reduce(state: PlayerState, action: PlayerAction): PlayerState {
       const apps = committed(state);
       // An app that is already starting or open isn't launched again.
       if (action.request.kind === "launch" && apps.windows[action.request.app] !== "closed") return state;
-      const scenario = buildScenario(action.request, state.machine, apps);
-      const seq = state.seq + 1;
-      return {
-        ...state,
-        seq,
-        apps,
-        machine: machineAfter(scenario, state.machine),
-        run: {
-          seq,
-          replay: 0,
-          scenario,
-          index: 0,
-          status: "playing",
-          base: applyTrigger(action.request, apps),
-          before: state.machine,
-        },
-      };
+      return begin(state, action.request, apps, state.machine);
     }
     case "play":
       if (!run) return state;
@@ -400,12 +430,13 @@ function reduce(state: PlayerState, action: PlayerAction): PlayerState {
       }
       const effect = command(action.text, committed(state));
       if (effect.kind === "trace") return reduce(state, { type: "start", request: effect.request });
-      // bash answers at once, below what the last trace printed: that trace is over.
-      const settled = run && run.status === "done" ? { ...state, apps: committed(state), run: null } : state;
       return effect.kind === "clear"
-        ? reduce(settled, { type: "terminal", clear: true })
-        : reduce(settled, { type: "terminal", append: effect.lines });
+        ? print(state, { type: "terminal", clear: true })
+        : print(state, { type: "terminal", append: effect.lines });
     }
+    case "control":
+      // Ctrl+D is a byte like any other: it waits with typed-ahead lines. Ctrl+C acts at once.
+      return action.key === "d" ? reduce(state, { type: "command", text: EOT }) : interrupt(state);
     case "terminal":
       return mutateApps(state, (apps) => ({
         ...apps,

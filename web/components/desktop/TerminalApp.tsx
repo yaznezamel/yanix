@@ -3,7 +3,7 @@
 import { useEffect, useRef } from "react";
 import { PROMPT } from "@/lib/xray/apps";
 import { programReads } from "@/lib/xray/scenarios";
-import { inputLimit, programAnswers } from "@/lib/xray/shell";
+import { CONTROL_KEYS, controlKey, inputLimit, programAnswers, shownLine } from "@/lib/xray/shell";
 import type { Program, TermLine, TerminalState } from "@/lib/xray/types";
 import styles from "../lab/lab.module.css";
 
@@ -14,6 +14,8 @@ interface TerminalAppProps {
   /** Lines typed while a trace still plays: they wait in the TTY until something reads them. */
   typedAhead: string[];
   onCommand: (command: string) => void;
+  /** Ctrl+C or Ctrl+D. */
+  onControl: (key: "c" | "d") => void;
 }
 
 const SHELL_QUICK = ["./marks", "./cores", "cat notes.txt", "help", "clear"];
@@ -21,7 +23,7 @@ const SHELL_QUICK = ["./marks", "./cores", "cat notes.txt", "help", "clear"];
 /** A mouse or trackpad: focusing a field there does not open an on-screen keyboard over the page. */
 export const finePointer = () => window.matchMedia("(pointer: fine)").matches;
 
-export function TerminalApp({ state, program, typedAhead, onCommand }: TerminalAppProps) {
+export function TerminalApp({ state, program, typedAhead, onCommand, onControl }: TerminalAppProps) {
   const scrollRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const count = state.lines.length;
@@ -32,6 +34,7 @@ export function TerminalApp({ state, program, typedAhead, onCommand }: TerminalA
   const lines = asking ? state.lines.slice(0, -1) : state.lines;
   const quick = reads ? programAnswers(program) : SHELL_QUICK;
   const name = program?.kind === "cores" ? "cores" : "marks";
+  const runs = program !== null && program.stage !== "starting" && program.stage !== "exited";
 
   useEffect(() => {
     const el = scrollRef.current;
@@ -49,6 +52,11 @@ export function TerminalApp({ state, program, typedAhead, onCommand }: TerminalA
     if (finePointer()) inputRef.current?.focus({ preventScroll: true });
   }
 
+  function control(key: "c" | "d") {
+    onControl(key);
+    if (finePointer()) inputRef.current?.focus({ preventScroll: true });
+  }
+
   return (
     <div
       className="flex h-full flex-col bg-[#0c0d10] font-mono text-[12.5px] leading-[1.55] text-[#e8edf2]"
@@ -61,7 +69,7 @@ export function TerminalApp({ state, program, typedAhead, onCommand }: TerminalA
           ))}
           {typedAhead.map((text, i) => (
             <div key={`ahead-${i}`} className="whitespace-pre-wrap break-words text-white/55">
-              {text}
+              {shownLine(text)}
               <span className="text-white/40"> · typed ahead: it waits in the TTY until something reads it</span>
             </div>
           ))}
@@ -99,6 +107,17 @@ export function TerminalApp({ state, program, typedAhead, onCommand }: TerminalA
             autoComplete="off"
             spellCheck={false}
             maxLength={reads ? inputLimit(program) : undefined}
+            onKeyDown={(e) => {
+              // A terminal's keys, not the browser's: Ctrl+C interrupts (unless text is selected, to copy), and
+              // Ctrl+D at the start of a line ends the input.
+              const key = controlKey(e);
+              const field = e.currentTarget;
+              if (key === "c" && field.selectionStart !== field.selectionEnd) return;
+              if (key === null) return;
+              e.preventDefault();
+              if (key === "c") field.value = "";
+              if (key === "c" || field.value === "") control(key);
+            }}
             className="min-w-0 flex-1 rounded-sm bg-transparent text-[#e8edf2] caret-signal outline-none focus-visible:ring-1 focus-visible:ring-signal/50"
           />
         </form>
@@ -118,6 +137,21 @@ export function TerminalApp({ state, program, typedAhead, onCommand }: TerminalA
             {cmd}
           </button>
         ))}
+        {runs &&
+          CONTROL_KEYS.map((k) => (
+            <button
+              key={k.key}
+              type="button"
+              title={`${k.label}: ${k.what}`}
+              onClick={(e) => {
+                e.stopPropagation();
+                control(k.key);
+              }}
+              className="shrink-0 whitespace-nowrap rounded border border-white/15 px-2 py-0.5 text-white/60 hover:bg-white/[0.06]"
+            >
+              {k.label}
+            </button>
+          ))}
         <span className="ml-auto min-w-0 truncate text-white/45">
           {state.busy ? "running: what you type waits in the TTY" : reads ? `${name} is reading what you type` : ""}
         </span>

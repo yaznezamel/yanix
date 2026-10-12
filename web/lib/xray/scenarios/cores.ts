@@ -48,7 +48,9 @@ import {
   CODE,
   MEMORY,
   PROGRAM,
+  eofSteps,
   exitSteps,
+  interruptSteps,
   printLines,
   promptStep,
   startSteps,
@@ -75,6 +77,7 @@ const LINE = {
   fill: at("marks[i] = i % 101;"),
   prompt: at('printf("How many threads'),
   fgets: at("if (!fgets(line, sizeof line, stdin))"),
+  breakEof: at("break;", findLine(CORES_C, "if (!fgets(line, sizeof line, stdin))")),
   sscanf: at('if (sscanf(line, "%d"'),
   zero: at("if (threads == 0)"),
   per: at("size_t per = MARKS / threads;"),
@@ -593,7 +596,6 @@ function rejectSteps(t: Tracer<CoresState>, layout: CoresLayout, typed: string):
 }
 
 function stopSteps(t: Tracer<CoresState>, layout: CoresLayout, typed: string): void {
-  const array = arrayMapping(layout);
   t.add(
     {
       id: "sscanf",
@@ -608,6 +610,12 @@ function stopSteps(t: Tracer<CoresState>, layout: CoresLayout, typed: string): v
     { line: fgetsInto(t.state.line, typed), threads: 0, at: LINE.zero },
     [CORES_CHANGE.line, CORES_CHANGE.threads],
   );
+  endSteps(t, layout);
+}
+
+/** After the loop: the array goes back to the kernel, and main() returns. */
+function endSteps(t: Tracer<CoresState>, layout: CoresLayout): void {
+  const array = arrayMapping(layout);
   t.add(
     {
       id: "free",
@@ -628,6 +636,64 @@ function stopSteps(t: Tracer<CoresState>, layout: CoresLayout, typed: string): v
     [CORES_CHANGE.array, CORES_CHANGE.marks],
   );
   exitSteps(t, "cores", LINE.ret, { inMain: false }, " The stacks glibc kept for threads go with the rest of the address space.");
+}
+
+// ---------------------------------------------------------------- Ctrl+D and Ctrl+C
+
+/** Ctrl+D while ./cores asks for a number: fgets() returns NULL, and main() leaves its loop as for 0. */
+export function coresEof(program: CoresState): Scenario {
+  const layout = coresLayoutOf(program.run);
+  const t = tracer<CoresState>({ ...program, changed: [] }, cored);
+  const waking = mainWakes(t.state.cores, t.state.mainLast);
+  eofSteps(t, LINE.fgets, stdinOf(t, layout), { cores: waking.cores, mainLast: waking.core });
+  t.add(
+    {
+      id: "break",
+      phase: "app",
+      path: [PROGRAM],
+      parts: ALU,
+      title: "fgets() returned NULL: break",
+      body: "main() tests what fgets() returned: NULL, the end of input, so break leaves the loop, as 0 does, without a sscanf(). line[] keeps what it held.",
+      timescale: "ns",
+    },
+    { at: LINE.breakEof },
+  );
+  endSteps(t, layout);
+  return { kind: "programEof", app: "terminal", title: "Ctrl+D: end of input", focus: "split", steps: t.steps };
+}
+
+/** Ctrl+C while ./cores runs: SIGINT ends every thread, wherever each one is. */
+export function coresInterrupt(program: CoresState): Scenario {
+  const t = tracer<CoresState>({ ...program, changed: [] }, cored);
+  const main = mainCore(program);
+  const live = program.workers.filter((w) => w.state === "running" || w.state === "queued");
+  const sleeping =
+    program.stage === "threads"
+      ? ["main(), asleep in read()"]
+      : main === null
+        ? [live.length > 0 ? "main(), asleep in pthread_join()" : "main(), asleep in read()"]
+        : [];
+  interruptSteps(t, {
+    name: "./cores",
+    line: program.at,
+    sleeping,
+    running: [
+      ...(main === null || program.stage === "threads" ? [] : [{ what: "main()", core: main }]),
+      ...live.filter((w) => w.state === "running").map((w) => ({ what: `thread ${w.n}`, core: w.core })),
+    ],
+    waiting: live.filter((w) => w.state === "queued").map((w) => `thread ${w.n}`),
+    patch: {
+      inMain: false,
+      endedBy: "interrupt",
+      cores: program.cores.map(() => ({ running: null, queued: null })),
+      workers: program.workers.map((w) => (w.state === "running" || w.state === "queued" ? { ...w, state: "killed" as const } : w)),
+    },
+    undone:
+      live.length > 0
+        ? "main() never returns, and the threads that were adding never write their sums. No free(), no munmap(), no exit()."
+        : "main() never returns: no free(), no munmap(), and no exit().",
+  });
+  return { kind: "interrupt", app: "terminal", title: "Ctrl+C: SIGINT", focus: "split", steps: t.steps };
 }
 
 // ---------------------------------------------------------------- scenarios

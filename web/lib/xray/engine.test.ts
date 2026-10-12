@@ -17,6 +17,7 @@ import {
 } from "./engine";
 import { APPS, COLD_MACHINE, INITIAL_APPS, NOTES_FILE } from "./apps";
 import { buildScenario } from "./scenarios";
+import { EOT } from "./shell";
 import type { Step } from "./types";
 
 function run(actions: PlayerAction[], from: PlayerState = INITIAL_PLAYER): PlayerState {
@@ -359,6 +360,93 @@ describe("typing into the terminal", () => {
     const text = lines(state);
     expect(text.indexOf("make")).toBeGreaterThan(text.indexOf("Notes to self:"));
     expect(state.run).toBeNull();
+  });
+
+  it("ends ./marks's input with Ctrl+D at its first question: no student, nothing to free", () => {
+    const state = run(
+      [{ type: "command", text: "./marks" }, { type: "finish" }, { type: "control", key: "d" }, { type: "finish" }],
+      withTerminal,
+    );
+    const scenario = state.run!.scenario;
+    expect(scenario.kind).toBe("programEof");
+    expect(scenario.steps.map((x) => x.id)).toEqual(["key", "eof", "wake", "read", "break", "rows", "free", "exit", "exit-mm", "bash"]);
+    expect(scenario.steps.find((x) => x.id === "free")?.title).toBe("free(NULL)");
+    expect(currentApps(state).program).toMatchObject({ kind: "marks", stage: "exited" });
+    expect(currentApps(state).terminal.busy).toBe(false);
+  });
+
+  it("frees the name read_marks() was asking marks for when Ctrl+D ends the input", () => {
+    const state = run(
+      [
+        { type: "command", text: "./marks" },
+        { type: "finish" },
+        { type: "command", text: "Ada" },
+        { type: "finish" },
+        { type: "control", key: "d" },
+        { type: "finish" },
+      ],
+      withTerminal,
+    );
+    const ids = state.run!.scenario.steps.map((x) => x.id);
+    expect(ids.slice(4, 6)).toEqual(["return", "free-name"]);
+    const p = currentApps(state).program;
+    if (p?.kind !== "marks") throw new Error("not ./marks");
+    expect(p.got).toBe(-1);
+    expect(p.heap.chunks.find((c) => c.tag === "name")?.state).toBe("tcache");
+  });
+
+  it("ends ./cores's input with Ctrl+D: the array goes back with munmap()", () => {
+    const state = run(
+      [{ type: "command", text: "./cores" }, { type: "finish" }, { type: "control", key: "d" }, { type: "finish" }],
+      withTerminal,
+    );
+    expect(state.run!.scenario.steps.map((x) => x.id)).toContain("free");
+    expect(currentApps(state).program).toMatchObject({ kind: "cores", stage: "exited", mapped: false });
+  });
+
+  it("keeps Ctrl+D with the lines typed ahead: it is a byte like the others", () => {
+    let state = run([{ type: "command", text: "./cores" }, { type: "control", key: "d" }], withTerminal);
+    expect(state.typedAhead).toEqual([EOT]);
+    state = playerReducer(state, { type: "finish" });
+    expect(state.run?.scenario.kind).toBe("programEof");
+  });
+
+  it("echoes ^C at bash's prompt, where nothing runs", () => {
+    const state = run([{ type: "control", key: "c" }], withTerminal);
+    expect(currentApps(state).terminal.lines.at(-1)).toEqual({ kind: "prompt", text: "^C" });
+    expect(state.run).toBeNull();
+  });
+
+  it("ends ./marks with Ctrl+C while it reads: SIGINT, and no free() or return from main()", () => {
+    const state = run(
+      [{ type: "command", text: "./marks" }, { type: "finish" }, { type: "control", key: "c" }, { type: "finish" }],
+      withTerminal,
+    );
+    const scenario = state.run!.scenario;
+    expect(scenario.kind).toBe("interrupt");
+    expect(scenario.steps.map((x) => x.id)).toEqual(["key", "intr", "deliver", "exit", "exit-mm", "bash"]);
+    expect(scenario.steps.find((x) => x.id === "deliver")?.body).toContain("wakes main(), asleep in read()");
+    expect(currentApps(state).program).toMatchObject({ kind: "marks", stage: "exited", endedBy: "interrupt", inMain: false });
+    expect(currentApps(state).terminal.lines.at(-1)).toMatchObject({ kind: "ask", answer: "^C" });
+  });
+
+  it("cuts ./cores's round where the playhead is when Ctrl+C comes, and every thread dies", () => {
+    let state = run([{ type: "command", text: "./cores" }, { type: "finish" }, { type: "command", text: "4" }], withTerminal);
+    const adding = visibleSteps(state.run!.scenario, state.detail).findIndex((x) => x.id === "add");
+    state = run([{ type: "seek", index: adding }, { type: "command", text: "1" }, { type: "control", key: "c" }], state);
+    // The interrupt flushes the line typed ahead, as isig() flushes the TTY's input.
+    expect(state.typedAhead).toEqual([]);
+    expect(state.run?.scenario.kind).toBe("interrupt");
+    const deliver = state.run!.scenario.steps.find((x) => x.id === "deliver")!;
+    expect(deliver.cores).toEqual([1, 2, 3, 0]);
+    expect(deliver.body).toContain("main(), asleep in pthread_join()");
+    state = playerReducer(state, { type: "finish" });
+    const p = currentApps(state).program;
+    if (p?.kind !== "cores") throw new Error("not ./cores");
+    expect([p.stage, p.endedBy]).toEqual(["exited", "interrupt"]);
+    expect(p.workers.map((w) => w.state)).toEqual(["killed", "killed", "killed", "killed"]);
+    // What the round had printed before the cut stays on screen; the rest never happened.
+    expect(currentApps(state).terminal.lines.some((l) => l.text.startsWith("thread 1:"))).toBe(false);
   });
 
   it("throws the waiting lines away when the terminal closes", () => {

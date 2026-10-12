@@ -61,6 +61,7 @@ const STATE: Record<ThreadState, string> = {
   running: "running add_up()",
   done: "finished",
   joined: "finished and joined",
+  killed: "killed before it finished",
 };
 
 export function CoresView({ program }: { program: CoresState }) {
@@ -82,7 +83,7 @@ export function CoresView({ program }: { program: CoresState }) {
   }
   return (
     <div ref={box} className="@container h-full overflow-y-auto px-3 pb-3">
-      <ViewHeader command="./cores" stage={STAGE[program.stage]} exited={exited} run={program.run} hungUp={program.hungUp} />
+      <ViewHeader command="./cores" stage={STAGE[program.stage]} exited={exited} run={program.run} endedBy={program.endedBy} />
       {/* One column when narrow; the cores across the top when wider; then the threads and main() side by side. */}
       <div
         className={`grid items-start gap-3 [grid-template-areas:'cores'_'source'_'threads'_'main'_'map'] @2xl:grid-cols-2 @2xl:[grid-template-areas:'cores_cores'_'source_source'_'threads_main'_'map_map'] @5xl:grid-cols-[minmax(0,0.9fr)_minmax(0,1fr)_minmax(0,1fr)] @5xl:[grid-template-areas:'cores_cores_cores'_'source_threads_main'_'map_threads_main'] ${
@@ -266,7 +267,11 @@ function MainFrame({ program, layout, changed }: { program: CoresState; layout: 
     return (
       <Panel title="main()'s stack" sub="grows down ↓" lit={changed.has(CORES_CHANGE.main)}>
         <p className="px-2.5 py-2 text-[12.5px] text-lab-muted">
-          {program.at > 0 ? "main() has returned: no frame is left." : "main() has not started yet."}
+          {program.endedBy
+            ? "main() never returned: a signal ended the process, and its stack went with it."
+            : program.at > 0
+              ? "main() has returned: no frame is left."
+              : "main() has not started yet."}
         </p>
       </Panel>
     );
