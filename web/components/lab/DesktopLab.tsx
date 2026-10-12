@@ -50,7 +50,7 @@ const LEFT_BASIS: Record<LayoutMode, string> = {
 
 /**
  * Height kept under the screen on wide screens: the panels' minimum, the gap
- * and the bezel. While a trace plays (Split) the story gets more of it: the
+ * and the bezel. While a trace plays the story gets more of it: the
  * explanation matters more than the size of the simulated screen.
  */
 const PANELS_RESERVE: Record<LayoutMode, string> = {
@@ -58,6 +58,9 @@ const PANELS_RESERVE: Record<LayoutMode, string> = {
   split: "300px",
   machine: "382px",
 };
+
+/** In the Screen layout while a trace plays: room for a step's title, where it is, and a few lines of its story. */
+const SCREEN_TRACE_RESERVE = "330px";
 
 /** More height under the screen while a C program runs: its answer bar (84px) and a gap. */
 const ANSWER_BAR = "96px";
@@ -176,6 +179,10 @@ export function DesktopLab() {
       ) {
         return;
       }
+      // Something that scrolls sideways has a use for the arrows itself.
+      if ((e.key === "ArrowLeft" || e.key === "ArrowRight") && target && target.scrollWidth > target.clientWidth + 1) {
+        return;
+      }
       if (e.key === " " && !(target instanceof HTMLButtonElement)) {
         e.preventDefault();
         dispatch({ type: "toggle" });
@@ -252,6 +259,11 @@ export function DesktopLab() {
     );
   }
 
+  /** Reading on (More, or a chip that jumps to a sentence) pauses the trace, so the step does not change mid-sentence. */
+  function handleRead() {
+    if (status === "playing") dispatch({ type: "pause" });
+  }
+
   /** Dragging the timeline pauses the trace, and lets it play on when you let go. */
   function handleScrub(scrubbing: boolean) {
     if (scrubbing) {
@@ -292,6 +304,7 @@ export function DesktopLab() {
   const panelClass = `min-h-[200px] overflow-hidden rounded-xl border border-lab-line bg-lab-panel ${
     layout === "machine" ? "xl:min-h-0" : ""
   }`;
+  const reserve = active && layout === "screen" ? SCREEN_TRACE_RESERVE : PANELS_RESERVE[layout];
 
   return (
     <MotionConfig reducedMotion="user">
@@ -356,7 +369,7 @@ export function DesktopLab() {
             style={
               {
                 "--left": LEFT_BASIS[layout],
-                "--reserve": programRuns ? `calc(${PANELS_RESERVE[layout]} + ${ANSWER_BAR})` : PANELS_RESERVE[layout],
+                "--reserve": programRuns ? `calc(${reserve} + ${ANSWER_BAR})` : reserve,
               } as React.CSSProperties
             }
           >
@@ -421,10 +434,11 @@ export function DesktopLab() {
                   selected={selected}
                   onCloseInspector={() => setSelected(null)}
                   onShowInHardware={showInHardware}
+                  onRead={handleRead}
                 />
               </div>
               <div className={panelClass}>
-                <PacketPanel packet={packet} previous={previousPacket} step={step} />
+                <PacketPanel packet={packet} previous={previousPacket} step={step} onRead={handleRead} />
               </div>
             </div>
           </div>
@@ -489,6 +503,13 @@ export function DesktopLab() {
                     <span className="h-0.5 w-4 rounded bg-signal shadow-[0_0_6px_var(--color-signal)]" />
                     Signal
                   </span>
+                  <span
+                    className="flex cursor-help items-center gap-1.5"
+                    title="Where the kernel meets the hardware. MMIO: the CPU reads and writes a device's registers at memory addresses. DMA: a device copies data to or from RAM by itself. Interrupts: a device tells the CPU that something happened."
+                  >
+                    <span className="h-1.5 w-4 rounded-[1px] bg-gradient-to-b from-[#ffd9a3]/80 to-[#ffb35c]/40" />
+                    Kernel ↔ hardware
+                  </span>
                 </span>
                 <span
                   aria-hidden={tab !== "hardware"}
@@ -528,6 +549,7 @@ export function DesktopLab() {
                 role="tabpanel"
                 aria-labelledby="machine-tab-software"
                 inert={tab !== "software"}
+                data-scroll-x
                 className={`absolute inset-0 overflow-x-auto xl:overflow-hidden ${tab === "software" ? "" : "invisible"}`}
               >
                 <div className="h-full min-w-[680px] px-2 pb-2 xl:min-w-0">
@@ -537,6 +559,7 @@ export function DesktopLab() {
                     geometry={geometry}
                     progress={playhead.progress}
                     reached={reached}
+                    reduced={reduced}
                     selected={selected}
                     scenarioNodes={scenarioNodes}
                     onSelect={handleSelect}

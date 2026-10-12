@@ -1,16 +1,31 @@
-import { NODES, centerOf, viaPoints, type Point } from "./nodes";
+import { NODES, centerOf, type Point } from "./nodes";
+import { route, type Route } from "./route";
 import type { NodeId } from "./types";
 
 // A step's route through the software map, drawn as numbered stops joined by
-// arrows: each hop is a straight line (rounded at its corners) from the edge
-// of one box to the edge of the next. The signal travels the whole route,
-// through the boxes, so the hops and the moving signal share one geometry.
+// arrows: each hop runs from the edge of one box to the edge of the next,
+// straight, or around the boxes in the way (route.ts), rounded at its turns.
+// The signal travels the whole route, through the boxes, so the hops and the
+// moving signal share one geometry.
 
 /** One hop of a route: from the box at stop i to the box at stop i + 1. */
 export interface Hop {
   /** SVG path data, from the first box's edge to the next box's edge. */
   d: string;
   /** Where the hop starts and ends along the whole route, as fractions from 0 to 1. */
+  from: number;
+  to: number;
+}
+
+/** The stretch of a bar the signal runs along, between where the route meets it and where it leaves. */
+export interface BarRun {
+  /** The stop it belongs to, counted from 0. */
+  stop: number;
+  x1: number;
+  x2: number;
+  y: number;
+  h: number;
+  /** Where the run starts and ends along the whole route, as fractions from 0 to 1. */
   from: number;
   to: number;
 }
@@ -22,29 +37,24 @@ export interface PathGeometry {
   /** Fraction of the path (0..1) at which each path node is reached. */
   nodeAt: number[];
   hops: Hop[];
-  /** Where each stop's number goes: at the box's top left corner, or above a bar where the route meets it. */
+  runs: BarRun[];
+  /** Where each stop's number goes: on the box's top left corner, or on a bar where the route meets it. */
   badges: Point[];
 }
 
+/** A stop's number is a circle this big, centred on the box's corner. */
+export const BADGE_RADIUS = 12;
+
 /**
- * Where a path stops at a node: its centre, or, for a bar, two points on it:
- * straight below or above the box the route comes from, and the one it goes
- * on to. The signal runs along the bar between them, and the hops in and out
- * are straight up or down.
+ * Where a path stops at a node: its centre, or, for a bar, where the route
+ * from the stop before meets it and where the route to the next leaves it.
+ * The signal runs along the bar between the two.
  */
-function stops(ids: NodeId[], i: number, viaIn: Point[], viaOut: Point[]): Point[] {
-  const id = ids[i]!;
-  const node = NODES[id];
-  const c = centerOf(id);
-  if (!node.bar) return [c];
-  const clamp = (x: number) => Math.min(node.x + node.w - 16, Math.max(node.x + 16, x));
-  const prev = ids[i - 1];
-  const next = ids[i + 1];
-  const from = viaIn.at(-1)?.x ?? (prev && !NODES[prev].bar ? centerOf(prev).x : undefined);
-  const to = viaOut[0]?.x ?? (next && !NODES[next].bar ? centerOf(next).x : undefined);
-  const entry = clamp(from ?? to ?? c.x);
-  const exit = clamp(to ?? entry);
-  return entry === exit ? [{ x: entry, y: c.y }] : [{ x: entry, y: c.y }, { x: exit, y: c.y }];
+function stops(id: NodeId, before: Route | undefined, after: Route | undefined): Point[] {
+  if (!NODES[id].bar) return [centerOf(id)];
+  const entry = before?.end ?? after?.start ?? centerOf(id);
+  const exit = after?.start ?? entry;
+  return Math.abs(entry.x - exit.x) < 0.5 ? [entry] : [entry, exit];
 }
 
 function distance(a: Point, b: Point): number {
@@ -135,11 +145,11 @@ export function buildPath(ids: NodeId[]): PathGeometry {
   const points: Point[] = [];
   const nodeIndex: number[] = [];
   const legs: Point[][] = [];
-  const vias = ids.slice(1).map((id, i) => viaPoints(ids[i]!, id));
-  const at = ids.map((_, i) => stops(ids, i, vias[i - 1] ?? [], vias[i] ?? []));
+  const routes = ids.slice(1).map((id, i) => route(ids[i]!, id));
+  const at = ids.map((id, i) => stops(id, routes[i - 1], routes[i]));
   ids.forEach((_, i) => {
     if (i > 0) {
-      const via = vias[i - 1]!;
+      const via = routes[i - 1]!.via;
       points.push(...via);
       legs.push([at[i - 1]!.at(-1)!, ...via, at[i]![0]!]);
     }
@@ -163,18 +173,36 @@ export function buildPath(ids: NodeId[]): PathGeometry {
     return { d: polyline(lane === 0 ? clipped : offset(clipped, lane % 2 === 1 ? 7 : -7)), from: nodeAt[i]!, to: nodeAt[i + 1]! };
   });
 
-  // Each stop's number sits at its box's top left corner; a box the route
-  // visits again gets the next number beside the first.
+  // Along a bar, the signal runs from where the route meets it to where it leaves.
+  const runs: BarRun[] = [];
+  ids.forEach((id, i) => {
+    const node = NODES[id];
+    const [entry, exit] = at[i]!;
+    if (!node.bar || !entry || !exit) return;
+    const p = nodeIndex[i]!;
+    runs.push({
+      stop: i,
+      x1: entry.x,
+      x2: exit.x,
+      y: node.y,
+      h: node.h,
+      from: (cumulative[p] ?? 0) / total,
+      to: (cumulative[p + 1] ?? 0) / total,
+    });
+  });
+
+  // Each stop's number sits on its box's top left corner, clear of the label;
+  // a box the route visits again gets the next number beside the first.
   const seen = new Map<NodeId, number>();
   const badges = ids.map((id, i): Point => {
     const node = NODES[id];
     const repeat = seen.get(id) ?? 0;
     seen.set(id, repeat + 1);
-    const x = node.bar ? at[i]![0]!.x : node.x + 2;
-    return { x: x + repeat * 24, y: node.y };
+    const x = node.bar ? at[i]![0]!.x : node.x;
+    return { x: x + repeat * (2 * BADGE_RADIUS + 4), y: node.y };
   });
 
-  return { d: polyline(points), points, nodeAt, hops, badges };
+  return { d: polyline(points), points, nodeAt, hops, runs, badges };
 }
 
 /** Index of the last path node the signal has reached at progress p. */

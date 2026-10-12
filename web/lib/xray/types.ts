@@ -330,6 +330,8 @@ export interface AwsNote {
   /** The AWS service or feature, as AWS names it. */
   service: string;
   text: string;
+  /** AWS's documentation for the note's figures (NFR9), when it gives any. */
+  source?: string;
 }
 
 export type ScenarioRequest =

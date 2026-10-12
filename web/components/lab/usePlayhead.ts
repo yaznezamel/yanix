@@ -33,6 +33,19 @@ export function travelled(nodeAt: number[], t: number): number {
   return from + eased * (nodeAt[hop + 1]! - from);
 }
 
+/**
+ * With reduced motion the signal does not glide: it is at one stop, then at
+ * the next, on the same clock, so the stops still light one by one.
+ */
+export function stepped(nodeAt: number[], t: number): number {
+  const hops = nodeAt.length - 1;
+  if (hops <= 0) return 1;
+  const clamped = Math.min(1, Math.max(0, t));
+  const hop = Math.min(hops - 1, Math.floor(clamped * hops));
+  const arrived = clamped >= 1 || clamped * hops - hop >= MOVING;
+  return nodeAt[arrived ? hop + 1 : hop]!;
+}
+
 export interface Playhead {
   /** How far through the current step, from 0 to 1. */
   fraction: MotionValue<number>;
@@ -85,10 +98,10 @@ export function usePlayhead({
   }, [index]);
 
   // The signal travels during the first part of the step, eased; with reduced
-  // motion it is simply there.
+  // motion it steps from stop to stop instead.
   useEffect(() => {
     const toProgress = (f: number) =>
-      reduced || travel === 0 || !nodeAt ? 1 : travelled(nodeAt, (f * total) / travel);
+      travel === 0 || !nodeAt ? 1 : (reduced ? stepped : travelled)(nodeAt, (f * total) / travel);
     const reachAt = (p: number) => {
       if (!nodeAt) return;
       const i = nodeIndexAt(nodeAt, p);
@@ -130,10 +143,6 @@ export function usePlayhead({
       // Paused on a step you stepped to: let the signal travel its path, then hold.
       const end = total > 0 ? travel / total : 0;
       if (!travelDue.current || from >= end) return;
-      if (reduced) {
-        fraction.jump(end);
-        return;
-      }
       const controls = animate(fraction, end, {
         duration: ((end - from) * total) / speed / 1000,
         ease: "linear",
@@ -164,7 +173,7 @@ export function usePlayhead({
     [dispatch, fraction],
   );
 
-  const fallback = nodeAt ? nodeIndexAt(nodeAt, reduced ? 1 : 0) : 0;
+  const fallback = 0;
   return {
     fraction,
     progress,

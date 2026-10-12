@@ -2,8 +2,10 @@
 
 import { AnimatePresence, motion } from "motion/react";
 import { useState } from "react";
-import { dataOf, packetBytes } from "@/lib/xray/packets";
+import { dataOf, onWire, packetBytes } from "@/lib/xray/packets";
 import type { AwsNote, Header, Packet, Step } from "@/lib/xray/types";
+import { Glossed } from "./glossary";
+import { MoreButton, MoreFade, useMoreCue } from "./moreCue";
 import { HEADER_COLOR, HEADER_TAG } from "./palette";
 
 // The panel beside the story: the data a step moves, and the same idea on
@@ -16,6 +18,8 @@ interface PacketPanelProps {
   previous: Packet | null;
   /** The step under way, for what it moves and its AWS note. */
   step: Step | null;
+  /** Reading on (More) pauses the trace. */
+  onRead: () => void;
 }
 
 const sameHeader = (a: Header, b: Header) => a.kind === b.kind && a.title === b.title;
@@ -62,14 +66,37 @@ function summary(header: Header): string {
   }
 }
 
-export function PacketPanel({ packet, previous, step }: PacketPanelProps) {
+export function PacketPanel({ packet, previous, step, onRead }: PacketPanelProps) {
+  const { watch, more, scrollDown } = useMoreCue();
   return (
-    <section aria-label="Data" className="flex h-full min-h-0 flex-col gap-3 overflow-y-auto p-4">
-      {packet ? <PacketView packet={packet} previous={previous} /> : <Moved step={step} />}
-      {/* A step with packets shows its AWS note in the story instead, so it never jumps mid-step. */}
-      {step?.aws && (step.frames?.length ?? 0) === 0 && <AwsCard aws={step.aws} />}
+    <section aria-label="Data" className="flex h-full min-h-0 flex-col gap-2 p-4">
+      <div className="relative flex min-h-0 flex-1 flex-col">
+        <div ref={watch} className="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto">
+          {packet ? <PacketView packet={packet} previous={previous} /> : <Moved step={step} />}
+          {/* A step with packets shows its AWS note in the story instead, so it never jumps mid-step. */}
+          {step?.aws && (step.frames?.length ?? 0) === 0 && <AwsCard aws={step.aws} />}
+        </div>
+        {more && <MoreFade />}
+      </div>
+      {more && (
+        <div className="flex shrink-0 justify-end">
+          <MoreButton
+            onMore={() => {
+              onRead();
+              scrollDown();
+            }}
+          />
+        </div>
+      )}
     </section>
   );
+}
+
+/** A service's name, short enough for a chip: "Amazon SQS long polling" is "SQS long polling". */
+export function shortService(service: string): string {
+  const acronym = service.match(/\(([^)]+)\)$/)?.[1];
+  if (acronym) return acronym;
+  return service.replace(/^(Amazon|AWS)\s+/, "");
 }
 
 /** No packet in flight: how much the step moves, in big type, or that nothing does. */
@@ -81,7 +108,9 @@ function Moved({ step }: { step: Step | null }) {
       {data ? (
         <>
           <p className="font-mono text-[22px] font-semibold leading-tight text-lab-ink">{data.amount}</p>
-          <p className="text-[13px] leading-snug text-lab-ink/80">{data.what}</p>
+          <p className="text-[13px] leading-snug text-lab-ink/80">
+            <Glossed text={data.what} />
+          </p>
         </>
       ) : (
         <>
@@ -105,7 +134,19 @@ export function AwsCard({ aws }: { aws: AwsNote }) {
           {aws.service}
         </span>
       </p>
-      <p className="mt-1.5 text-[13px] leading-relaxed text-lab-ink/85">{aws.text}</p>
+      <p className="mt-1.5 text-[13px] leading-relaxed text-lab-ink/85">
+        <Glossed text={aws.text} />
+      </p>
+      {aws.source && (
+        <a
+          href={aws.source}
+          target="_blank"
+          rel="noreferrer"
+          className="mt-1 inline-block text-[11.5px] text-[#ffb547] underline decoration-[#ffb547]/40 underline-offset-2 hover:decoration-[#ffb547]"
+        >
+          Source: {new URL(aws.source).hostname} ↗
+        </a>
+      )}
     </div>
   );
 }
@@ -127,7 +168,8 @@ function PacketView({ packet, previous }: { packet: Packet; previous: Packet | n
         <div className="flex items-center gap-2">
           {bytes !== null && (
             <span className="font-mono text-[10.5px] text-lab-muted">
-              {bytes} B{packet.headers[0]?.kind === "eth" ? " + 4 B checksum" : ""}
+              {bytes.toLocaleString("en-US")} B
+              {packet.headers[0]?.kind === "eth" ? ` · ${onWire(bytes).toLocaleString("en-US")} B on the wire` : ""}
             </span>
           )}
           <button

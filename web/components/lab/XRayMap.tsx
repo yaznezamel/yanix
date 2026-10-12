@@ -2,7 +2,7 @@
 
 import { AnimatePresence, motion, useTransform, type MotionValue } from "motion/react";
 import { memo, useEffect, useRef, useState } from "react";
-import type { Hop, PathGeometry } from "@/lib/xray/geometry";
+import { BADGE_RADIUS, type BarRun, type Hop, type PathGeometry } from "@/lib/xray/geometry";
 import type { Point } from "@/lib/xray/nodes";
 import { BANDS, NODES, NODE_IDS, TOPOLOGY, VIEW, centerOf } from "@/lib/xray/nodes";
 import { packetAt } from "@/lib/xray/packets";
@@ -25,16 +25,40 @@ interface XRayMapProps {
   progress: MotionValue<number>;
   /** Last path node the signal has reached. */
   reached: number;
+  /** Scroll without animation (prefers-reduced-motion). */
+  reduced: boolean;
   selected: NodeId | null;
   scenarioNodes: ReadonlySet<NodeId> | null;
   onSelect: (id: NodeId) => void;
 }
 
 const BOUNDARIES = [
-  { id: "syscall", d: "M 8 182 H 716", label: "system calls", x: 712, y: 179 },
-  { id: "device", d: "M 16 558 H 708", label: "MMIO · DMA · interrupts", x: 706, y: 553 },
-  { id: "cable", d: "M 723 14 V 746", label: "", x: 0, y: 0 },
+  {
+    id: "syscall",
+    d: "M 8 182 H 716",
+    label: "system calls",
+    x: 712,
+    y: 179,
+    about: "Where programs ask the kernel for anything they may not do themselves.",
+  },
+  {
+    id: "device",
+    d: "M 16 558 H 708",
+    label: "MMIO · DMA · interrupts",
+    x: 706,
+    y: 553,
+    about:
+      "Where the kernel meets the hardware. MMIO: the CPU reads and writes a device's registers at memory addresses. DMA: a device copies data to or from RAM by itself. Interrupts: a device tells the CPU that something happened.",
+  },
+  { id: "cable", d: "M 723 14 V 746", label: "", x: 0, y: 0, about: "" },
 ] as const;
+
+/** Where each layer's caption goes: clear of the corners of its boxes, where the stops' numbers sit. */
+function captionAt(layer: Layer, band: { x: number; y: number; w: number; h: number }) {
+  if (layer === "hardware") return { x: band.x + band.w - 10, y: band.y + band.h - 4, anchor: "end" as const };
+  if (layer === "user" || layer === "kernel") return { x: band.x + 10, y: band.y + band.h - (layer === "user" ? 7 : 12), anchor: "start" as const };
+  return { x: band.x + 10, y: band.y + 18, anchor: "start" as const };
+}
 
 /** The machine's own area: its layers sit on one board, and the network is outside it. */
 const MACHINE = { x: 8, y: 8, w: 708, h: 744 } as const;
@@ -173,6 +197,7 @@ export function XRayMap({
   geometry,
   progress,
   reached,
+  reduced,
   selected,
   scenarioNodes,
   onSelect,
@@ -186,10 +211,7 @@ export function XRayMap({
   const [compact, setCompact] = useState(false);
   const capsuleRef = useRef<SVGGElement>(null);
   const lastPoint = useRef<{ x: number; y: number } | null>(null);
-  const belowRef = useRef(false);
-  // Tall boxes keep their label at the top: park the capsule under the signal there.
-  const destination = step ? step.path[step.path.length - 1] : undefined;
-  const capsuleBelow = destination ? NODES[destination].h >= 60 : false;
+  const currentBadge = useRef<SVGGElement>(null);
 
   // The playhead's progress drives both the glowing trail and the packet
   // marker, so pausing or scrubbing the timeline moves both.
@@ -202,12 +224,11 @@ export function XRayMap({
       const point = route.getPointAtLength(total * Math.min(1, Math.max(0, p)));
       marker.setAttribute("transform", `translate(${point.x.toFixed(1)} ${point.y.toFixed(1)})`);
       lastPoint.current = { x: point.x, y: point.y };
-      placeCapsule(capsuleRef.current, point, capsuleBelow);
+      placeCapsule(capsuleRef.current, point);
     };
-    belowRef.current = capsuleBelow;
     place(progress.get());
     return progress.on("change", place);
-  }, [stepKey, geometry, progress, capsuleBelow]);
+  }, [stepKey, geometry, progress]);
 
   useEffect(() => {
     const svg = svgRef.current;
@@ -232,12 +253,24 @@ export function XRayMap({
 
   // The capsule's width changes when headers are added; re-place it then.
   useEffect(() => {
-    if (lastPoint.current) placeCapsule(capsuleRef.current, lastPoint.current, belowRef.current);
+    if (lastPoint.current) placeCapsule(capsuleRef.current, lastPoint.current);
   });
 
   const crossed = crossings(step);
   const packet = step ? packetAt(step.frames, reached) : null;
   const at = step ? Math.min(reached, step.path.length - 1) : 0;
+
+  // On a narrow screen the map scrolls sideways: keep the stop the signal is at in view.
+  useEffect(() => {
+    const badge = currentBadge.current;
+    const scroller = svgRef.current?.closest<HTMLElement>("[data-scroll-x]");
+    if (!badge || !scroller || scroller.scrollWidth <= scroller.clientWidth + 1) return;
+    const b = badge.getBoundingClientRect();
+    const box = scroller.getBoundingClientRect();
+    if (b.left >= box.left + 12 && b.right <= box.right - 12) return;
+    const left = scroller.scrollLeft + b.left + b.width / 2 - (box.left + box.width / 2);
+    scroller.scrollTo({ left, behavior: reduced ? "auto" : "smooth" });
+  }, [stepKey, at, reduced]);
   const current = step ? step.path[at] : undefined;
   const cacheAt = step?.cache ? step.path.indexOf("pagecache") : -1;
   const showCache = cacheAt >= 0 && reached >= cacheAt;
@@ -348,9 +381,10 @@ export function XRayMap({
               />
             )}
             <text
-              x={band.x + 10}
-              // The kernel's label goes at the bottom of its pane: the system call bar spans its top.
-              y={band.layer === "kernel" ? band.y + band.h - 12 : band.y + 18}
+              {...(() => {
+                const c = captionAt(band.layer, band);
+                return { x: c.x, y: c.y, textAnchor: c.anchor };
+              })()}
               fontSize={10.5}
               letterSpacing="0.14em"
               fill={hue}
@@ -391,18 +425,6 @@ export function XRayMap({
               strokeDasharray={b.id === "device" ? undefined : "5 5"}
               filter={active ? "url(#xray-glow)" : undefined}
             />
-            {b.label && (
-              <text
-                x={b.x}
-                y={b.y}
-                fontSize={10}
-                textAnchor="end"
-                fill={active ? SIGNAL : "rgba(255,255,255,0.55)"}
-                className="font-mono"
-              >
-                {b.label}
-              </text>
-            )}
           </g>
         );
       })}
@@ -449,14 +471,22 @@ export function XRayMap({
         />
       ))}
 
-      {showCache && step?.cache && <CacheBadge key={`${stepKey}-cache`} kind={step.cache} />}
-
-      {geometry && step && (
+      {geometry && (
+        // Along a bar, the stretch the signal runs: lit behind the bar's label, never across it.
         <g pointerEvents="none" aria-hidden>
-          {geometry.badges.map((point, i) => (
-            <StopBadge key={`${stepKey}-${i}`} n={i + 1} at={point} state={stop(i)} />
+          {geometry.runs.map((run) => (
+            <BarRunLight key={`${stepKey}-run-${run.stop}`} run={run} state={stop(run.stop)} progress={progress} />
           ))}
         </g>
+      )}
+
+      {showCache && step?.cache && <CacheBadge key={`${stepKey}-cache`} kind={step.cache} />}
+
+      {BOUNDARIES.map(
+        (b) =>
+          b.label && (
+            <BoundaryLabel key={`${b.id}-label`} text={b.label} about={b.about} x={b.x} y={b.y} active={crossed.has(b.id)} />
+          ),
       )}
 
       {geometry && (
@@ -466,6 +496,21 @@ export function XRayMap({
           <g ref={capsuleRef} data-width={packet ? packet.headers.length * CAPSULE_SEGMENT : 0}>
             <AnimatePresence>{packet && <Capsule key={stepKey} packet={packet} />}</AnimatePresence>
           </g>
+        </g>
+      )}
+
+      {geometry && step && (
+        // The numbers go on top of everything else, the moving packet included.
+        <g pointerEvents="none" aria-hidden>
+          {geometry.badges.map((point, i) => (
+            <StopBadge
+              key={`${stepKey}-${i}`}
+              ref={i === at ? currentBadge : undefined}
+              n={i + 1}
+              at={point}
+              state={stop(i)}
+            />
+          ))}
         </g>
       )}
     </svg>
@@ -557,7 +602,7 @@ function NodeBox({
         <text x={node.w / 2} y={labelY} textAnchor="middle" fontSize={12.5} fontWeight={600} fill="#e8edf2">
           {node.label}
           {!compact && (
-            <tspan fill="#8b96a3" fontSize={10} fontWeight={400} className="font-mono">
+            <tspan fill="#b4bdc7" fontSize={10} fontWeight={400} className="font-mono">
               {"   ·   "}
               {node.sub}
             </tspan>
@@ -569,7 +614,7 @@ function NodeBox({
             {node.label}
           </text>
           {node.sub && !compact && (
-            <text x={10} y={subY} fontSize={9.5} fill="#8b96a3" className="font-mono">
+            <text x={10} y={subY} fontSize={9.5} fill={glass ? "#a9b3be" : "#8b96a3"} className="font-mono">
               {node.sub}
             </text>
           )}
@@ -696,26 +741,91 @@ function HopLine({ hop, state, progress }: { hop: Hop; state: StopState; progres
   );
 }
 
-/** A stop's number: where it comes in the step, lit when the signal is there. */
-function StopBadge({ n, at, state }: { n: number; at: Point; state: StopState }) {
+/**
+ * A stop's number: where it comes in the step, lit when the signal is there.
+ * Centred on the box's corner, it stays clear of the box's label.
+ */
+function StopBadge({
+  n,
+  at,
+  state,
+  ref,
+}: {
+  n: number;
+  at: Point;
+  state: StopState;
+  ref?: React.Ref<SVGGElement>;
+}) {
   const fill = state === "current" ? SIGNAL : state === "done" ? "#0c3540" : "#0b0f14";
-  const ink = state === "current" ? "#03141a" : state === "done" ? SIGNAL : "rgba(255,255,255,0.75)";
-  const ring = state === "ahead" ? "rgba(255,255,255,0.45)" : SIGNAL;
+  const ink = state === "current" ? "#03141a" : state === "done" ? SIGNAL : "rgba(255,255,255,0.8)";
+  const ring = state === "ahead" ? "rgba(255,255,255,0.5)" : SIGNAL;
   return (
-    <g transform={`translate(${at.x} ${at.y})`}>
-      {state === "current" && <circle r={14} fill="none" stroke={SIGNAL} strokeWidth={2} className={styles.ping} />}
-      <motion.circle
-        r={14}
+    <g ref={ref} transform={`translate(${at.x} ${at.y})`}>
+      {state === "current" && (
+        <circle r={BADGE_RADIUS} fill="none" stroke={SIGNAL} strokeWidth={2} className={styles.ping} />
+      )}
+      <circle
+        r={BADGE_RADIUS}
         fill={fill}
         stroke={ring}
         strokeWidth={1.6}
-        initial={false}
-        animate={{ scale: state === "current" ? 1.18 : 1 }}
-        transition={{ duration: 0.25 }}
         filter={state === "current" ? "url(#xray-glow)" : undefined}
       />
-      <text y={5} textAnchor="middle" fontSize={14} fontWeight={800} fill={ink} className="font-mono">
+      <text y={4.5} textAnchor="middle" fontSize={n >= 10 ? 11.5 : 13} fontWeight={800} fill={ink} className="font-mono">
         {n}
+      </text>
+    </g>
+  );
+}
+
+/**
+ * The stretch of a bar the signal runs along. Done: lit. Ahead: outlined, so
+ * the whole route shows. Now: lighting up as the signal goes.
+ */
+function BarRunLight({ run, state, progress }: { run: BarRun; state: StopState; progress: MotionValue<number> }) {
+  const left = Math.min(run.x1, run.x2);
+  const width = Math.abs(run.x2 - run.x1);
+  const span = run.to - run.from || 1;
+  const lit = useTransform(progress, (p) => Math.min(1, Math.max(0, (p - run.from) / span)));
+  const grow = useTransform(lit, (f) => Math.max(0.001, f));
+  const y = run.y + 3;
+  const h = run.h - 6;
+  // It grows from where the route meets the bar towards where it leaves.
+  const origin = run.x2 >= run.x1 ? "left" : "right";
+  if (state === "ahead") {
+    return (
+      <rect x={left} y={y} width={width} height={h} rx={4} fill="none" stroke="rgba(255,255,255,0.35)" strokeDasharray="4 4" />
+    );
+  }
+  return (
+    <motion.rect
+      x={left}
+      y={y}
+      width={width}
+      height={h}
+      rx={4}
+      fill={alpha(SIGNAL, 0.16)}
+      stroke={alpha(SIGNAL, state === "done" ? 0.7 : 0.95)}
+      strokeWidth={1.4}
+      style={
+        state === "current"
+          ? { scaleX: grow, transformBox: "fill-box", transformOrigin: origin }
+          : undefined
+      }
+    />
+  );
+}
+
+/** A boundary's name, on a dark backing so the hops that cross it never hide it; hover for what it means. */
+function BoundaryLabel({ text, about, x, y, active }: { text: string; about: string; x: number; y: number; active: boolean }) {
+  // The font is monospaced: about 6 units a character at this size.
+  const width = text.length * 6.05 + 8;
+  return (
+    <g>
+      <title>{about}</title>
+      <rect x={x - width + 4} y={y - 9.5} width={width} height={13} rx={3} fill="rgba(8,10,13,0.88)" />
+      <text x={x} y={y} fontSize={10} textAnchor="end" fill={active ? SIGNAL : "rgba(255,255,255,0.7)"} className="font-mono">
+        {text}
       </text>
     </g>
   );
@@ -759,17 +869,18 @@ function CacheBadge({ kind }: { kind: "hit" | "miss" }) {
 
 const CAPSULE_SEGMENT = 30;
 
-/** Centre the capsule above the signal (or below it), always inside the view. */
-function placeCapsule(
-  capsule: SVGGElement | null,
-  point: { x: number; y: number },
-  below: boolean,
-) {
+/**
+ * The capsule rides below and to the right of the signal: a box's number and
+ * label are at its top left, so at a stop they stay in sight. Near the edges
+ * of the view it moves to the other side.
+ */
+function placeCapsule(capsule: SVGGElement | null, point: { x: number; y: number }) {
   if (!capsule) return;
   const width = Number(capsule.dataset.width ?? 0);
-  const dx = Math.max(6 - point.x, Math.min(VIEW.width - 6 - width - point.x, -width / 2));
-  const dy = below || point.y < 72 ? 18 : -40;
-  capsule.setAttribute("transform", `translate(${dx.toFixed(1)} ${dy})`);
+  const right = point.x + 12 + width + 6 <= VIEW.width;
+  const dx = right ? 12 : -12 - width;
+  const dy = point.y + 12 + 24 <= VIEW.height ? 12 : -34;
+  capsule.setAttribute("transform", `translate(${dx} ${dy})`);
 }
 
 function Capsule({ packet }: { packet: Packet }) {

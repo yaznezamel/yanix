@@ -119,6 +119,12 @@ describe("web search", () => {
     expect(packetBytes(packet)).toBe(75);
   });
 
+  it("pads a short frame to Ethernet's minimum on the wire", () => {
+    const request = dataOf(step(cold, "arp-request"))!;
+    expect(request.amount).toBe("64 bytes");
+    expect(request.what).toContain("18 bytes of padding");
+  });
+
   it("shows the NAT rewrite once the SYN has left the router", () => {
     const nat = step(cold, "tcp-nat");
     expect(packetAt(nat.frames, 1)!.headers.find((h) => h.kind === "ip")?.fields[0]?.value).toBe("192.168.1.23");
@@ -126,7 +132,10 @@ describe("web search", () => {
   });
 
   it("says how many bytes the handshakes move", () => {
-    expect(dataOf(step(cold, "tcp-syn"))?.amount).toBe("74 bytes + 4");
+    expect(dataOf(step(cold, "tcp-syn"))?.amount).toBe("78 bytes");
+    expect(dataOf(step(cold, "tcp-syn"))?.what).toBe(
+      "on the wire: the TCP header (40 bytes) in IPv4 (20) and Ethernet (14) headers, and a 4-byte checksum",
+    );
     expect(dataOf(step(cold, "tls-hello"))?.amount).toBe("1,541 bytes");
     expect(dataOf(step(cold, "dns-syscall"))?.amount).toBe("2 × 33 bytes");
   });
@@ -221,7 +230,7 @@ describe("a keystroke", () => {
       "struct input_event",
       "struct input_event (sync)",
     ]);
-    expect(dataOf(step(s, "evdev"))?.amount).toBe("72 bytes");
+    expect(dataOf(step(s, "evdev"))?.amount).toBe("3 × 24 bytes");
   });
 
   it("goes from the keyboard through the kernel and the compositor to the app", () => {
@@ -357,13 +366,4 @@ describe("geometry", () => {
     expect(buildPath(["resolver", "tld", "resolver"]).points.length).toBeGreaterThan(3);
   });
 
-  it("runs up the side of the kernel's middle column instead of through its boxes", () => {
-    const up = buildPath(["usbdrv", "input"]);
-    expect(up.points.some((p) => p.x === 516)).toBe(true);
-    const out = buildPath(["input", "syscall", "shell"]);
-    // Two points up the trunk, and the bar entered straight above them.
-    expect(out.points.filter((p) => p.x === 516).length).toBe(3);
-    const direct = buildPath(["proc", "syscall", "shell"]);
-    expect(direct.points.some((p) => p.x === 516 || p.x === 200)).toBe(false);
-  });
 });
