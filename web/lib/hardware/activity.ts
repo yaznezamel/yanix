@@ -182,3 +182,38 @@ export function whereIs(tree: Tree, node: NodeId): Whereabouts {
   if (code) return { how: "runs", parts: deepest(tree.all.filter((p) => p.part.runs?.includes(layer))) };
   return { how: "is", parts: [] };
 }
+
+/** The software a core runs in a step, and its layer: what to call the code the hardware is executing. */
+export interface Software {
+  what: string;
+  layer: "user" | "kernel";
+}
+
+/** Core n of the CPU from its part's id ("cpu.core2" is 2), or null for any other part. */
+export function coreIndex(id: string): number | null {
+  const match = /^cpu\.core(\d+)$/.exec(id);
+  return match ? Number(match[1]) : null;
+}
+
+/**
+ * What a core runs at this point of a step. For ./cores, the lab's model of
+ * the scheduler says which thread each core runs (lib/xray/cores); for other
+ * traces it is the program or kernel code the signal is in. A thread in a
+ * system call runs kernel code, so the layer follows the signal.
+ */
+export function softwareOn(step: Step | null, core: number, reached: number): Software | null {
+  if (!step) return null;
+  const here = NODES[step.path[Math.min(reached, step.path.length - 1)]!];
+  const layer = here.layer === "kernel" ? "kernel" : "user";
+  const program = step.ui?.program;
+  if (program?.kind === "cores" && program.stage !== "starting" && program.stage !== "exited") {
+    const use = program.cores[core]?.running;
+    if (use === "main") {
+      const thread = program.inMain ? "./cores: main()" : "./cores, starting up";
+      return { what: layer === "kernel" ? `${thread}, in the kernel: ${here.label}` : thread, layer };
+    }
+    if (typeof use === "number") return { what: `./cores: thread ${use}, add_up()`, layer: "user" };
+    return null;
+  }
+  return here.layer === "user" || here.layer === "kernel" ? { what: here.label, layer } : null;
+}

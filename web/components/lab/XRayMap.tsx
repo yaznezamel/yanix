@@ -1,7 +1,7 @@
 "use client";
 
 import { AnimatePresence, motion, useTransform, type MotionValue } from "motion/react";
-import { useEffect, useRef, useState } from "react";
+import { memo, useEffect, useRef, useState } from "react";
 import type { Hop, PathGeometry } from "@/lib/xray/geometry";
 import type { Point } from "@/lib/xray/nodes";
 import { BANDS, NODES, NODE_IDS, TOPOLOGY, VIEW, centerOf } from "@/lib/xray/nodes";
@@ -32,9 +32,95 @@ interface XRayMapProps {
 
 const BOUNDARIES = [
   { id: "syscall", d: "M 8 182 H 716", label: "system calls", x: 712, y: 179 },
-  { id: "device", d: "M 8 558 H 716", label: "MMIO · DMA · interrupts", x: 712, y: 555 },
+  { id: "device", d: "M 16 558 H 708", label: "MMIO · DMA · interrupts", x: 706, y: 553 },
   { id: "cable", d: "M 723 14 V 746", label: "", x: 0, y: 0 },
 ] as const;
+
+/** The machine's own area: its layers sit on one board, and the network is outside it. */
+const MACHINE = { x: 8, y: 8, w: 708, h: 744 } as const;
+const SOFTWARE = BANDS.filter((b) => b.layer === "user" || b.layer === "kernel");
+const HARDWARE_BAND = BANDS.find((b) => b.layer === "hardware")!;
+
+/** Where the contacts of the kernel's card meet the board: under the drivers that talk to devices. */
+const CONTACTS = [36, 66, 101, 136, 166, 236, 270, 304, 384, 434, 484, 548, 583, 618, 653, 688];
+
+/**
+ * The board under the machine's layers: circuit traces, crisp under the
+ * hardware and frosted under the software, which floats over it as glass,
+ * with soft shadows below each pane. It never changes, so it is drawn once,
+ * apart from the map that animates above it.
+ */
+const Board = memo(function Board() {
+  return (
+    <svg
+      viewBox={`0 0 ${VIEW.width} ${VIEW.height}`}
+      preserveAspectRatio="xMidYMin meet"
+      className="pointer-events-none absolute inset-0 h-full w-full"
+      aria-hidden
+    >
+      <defs>
+        <pattern id="board-traces" width="56" height="56" patternUnits="userSpaceOnUse">
+          <g fill="none" stroke="rgba(255,179,92,0.22)" strokeWidth={1.2}>
+            <path d="M 0 12 H 18 L 26 20 H 56" />
+            <path d="M 40 0 V 8 L 46 14 V 34 L 40 40 V 56" />
+            <path d="M 0 44 H 10 L 16 38 H 30" />
+          </g>
+          <g fill="rgba(255,179,92,0.3)">
+            <circle cx={30} cy={38} r={2.4} />
+            <circle cx={18} cy={12} r={1.6} />
+            <circle cx={46} cy={24} r={1.6} />
+          </g>
+        </pattern>
+        <filter id="board-frost" x="-5%" y="-5%" width="110%" height="110%">
+          <feGaussianBlur stdDeviation={2.2} />
+        </filter>
+        <filter id="board-shadow" x="-10%" y="-10%" width="120%" height="130%">
+          <feGaussianBlur stdDeviation={9} />
+        </filter>
+        <clipPath id="board-soft">
+          {SOFTWARE.map((b) => (
+            <rect key={b.layer} x={b.x} y={b.y} width={b.w} height={b.h} rx={12} />
+          ))}
+        </clipPath>
+        <clipPath id="board-hard">
+          <rect x={HARDWARE_BAND.x} y={HARDWARE_BAND.y} width={HARDWARE_BAND.w} height={HARDWARE_BAND.h} rx={12} />
+        </clipPath>
+      </defs>
+      <rect x={MACHINE.x} y={MACHINE.y} width={MACHINE.w} height={MACHINE.h} rx={14} fill="#0b0907" />
+      <rect
+        x={MACHINE.x}
+        y={MACHINE.y}
+        width={MACHINE.w}
+        height={MACHINE.h}
+        fill="url(#board-traces)"
+        clipPath="url(#board-hard)"
+      />
+      <g clipPath="url(#board-soft)">
+        <rect
+          x={MACHINE.x}
+          y={MACHINE.y}
+          width={MACHINE.w}
+          height={MACHINE.h}
+          fill="url(#board-traces)"
+          opacity={1}
+          filter="url(#board-frost)"
+        />
+      </g>
+      {SOFTWARE.map((b) => (
+        <rect
+          key={b.layer}
+          x={b.x + 6}
+          y={b.y + 12}
+          width={b.w - 12}
+          height={b.h - 6}
+          rx={12}
+          fill="rgba(0,0,0,0.55)"
+          filter="url(#board-shadow)"
+        />
+      ))}
+    </svg>
+  );
+});
 
 type BoundaryId = (typeof BOUNDARIES)[number]["id"];
 
@@ -167,11 +253,13 @@ export function XRayMap({
   const stop = (i: number): StopState => (i < at ? "done" : i === at ? "current" : "ahead");
 
   return (
+    <div className="relative h-full w-full">
+    <Board />
     <svg
       ref={svgRef}
       viewBox={`0 0 ${VIEW.width} ${VIEW.height}`}
       preserveAspectRatio="xMidYMin meet"
-      className="h-full w-full select-none"
+      className="relative h-full w-full select-none"
       role="group"
       aria-label={step ? `Machine view. ${step.title}` : "Machine view"}
     >
@@ -190,6 +278,19 @@ export function XRayMap({
             <feMergeNode in="SourceGraphic" />
           </feMerge>
         </filter>
+        <linearGradient id="glass-pane" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0" stopColor="#ffffff" stopOpacity={0.12} />
+          <stop offset="0.3" stopColor="#ffffff" stopOpacity={0.05} />
+          <stop offset="1" stopColor="#ffffff" stopOpacity={0.03} />
+        </linearGradient>
+        <linearGradient id="glass-chip" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0" stopColor="#ffffff" stopOpacity={0.16} />
+          <stop offset="1" stopColor="#ffffff" stopOpacity={0.04} />
+        </linearGradient>
+        <linearGradient id="rail" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0" stopColor="#ffd9a3" stopOpacity={0.55} />
+          <stop offset="1" stopColor="#ffb35c" stopOpacity={0.15} />
+        </linearGradient>
         <pattern id="xray-stripes" width="6" height="6" patternUnits="userSpaceOnUse" patternTransform="rotate(45)">
           <rect width="3" height="6" fill="rgba(5,8,11,0.35)" />
         </pattern>
@@ -210,29 +311,74 @@ export function XRayMap({
         ))}
       </defs>
 
-      {BANDS.map((band) => (
-        <g key={band.layer}>
-          <rect
-            x={band.x}
-            y={band.y}
-            width={band.w}
-            height={band.h}
-            rx={12}
-            fill={alpha(LAYER_HEX[band.layer], 0.045)}
-            stroke={alpha(LAYER_HEX[band.layer], 0.14)}
-          />
-          <text
-            x={band.x + 10}
-            y={band.y + 18}
-            fontSize={10.5}
-            letterSpacing="0.14em"
-            fill={LAYER_HEX[band.layer]}
-            className="font-mono"
-          >
-            {band.label}
-          </text>
-        </g>
-      ))}
+      {BANDS.map((band) => {
+        const glass = band.layer === "user" || band.layer === "kernel";
+        const hue = LAYER_HEX[band.layer];
+        return (
+          <g key={band.layer}>
+            {glass ? (
+              // Software: a pane of glass over the board, tinted by its layer, lit along its top edge.
+              <>
+                <rect x={band.x} y={band.y} width={band.w} height={band.h} rx={12} fill="url(#glass-pane)" />
+                <rect
+                  x={band.x}
+                  y={band.y}
+                  width={band.w}
+                  height={band.h}
+                  rx={12}
+                  fill={alpha(hue, 0.06)}
+                  stroke="rgba(255,255,255,0.2)"
+                />
+                <path
+                  d={`M ${band.x + 14} ${band.y + 0.75} H ${band.x + band.w - 14}`}
+                  stroke="rgba(255,255,255,0.42)"
+                  strokeWidth={1}
+                />
+              </>
+            ) : (
+              // Hardware and the network: the board itself shows through.
+              <rect
+                x={band.x}
+                y={band.y}
+                width={band.w}
+                height={band.h}
+                rx={12}
+                fill={band.layer === "network" ? alpha(hue, 0.045) : "none"}
+                stroke={alpha(hue, band.layer === "network" ? 0.14 : 0.3)}
+              />
+            )}
+            <text
+              x={band.x + 10}
+              // The kernel's label goes at the bottom of its pane: the system call bar spans its top.
+              y={band.layer === "kernel" ? band.y + band.h - 12 : band.y + 18}
+              fontSize={10.5}
+              letterSpacing="0.14em"
+              fill={hue}
+              className="font-mono"
+            >
+              {band.label}
+              {glass && (
+                <tspan fill="rgba(255,255,255,0.45)" letterSpacing="0.04em">
+                  {band.layer === "user" ? "   software: programs" : "   software: the kernel"}
+                </tspan>
+              )}
+              {band.layer === "hardware" && (
+                <tspan fill="rgba(255,255,255,0.45)" letterSpacing="0.04em">
+                  {"   the board and its chips"}
+                </tspan>
+              )}
+            </text>
+          </g>
+        );
+      })}
+
+      {/* Where the kernel's glass meets the board: a row of contacts, as on a card's edge. */}
+      <g aria-hidden>
+        <rect x={16} y={555} width={692} height={6} rx={1.5} fill="url(#rail)" />
+        {CONTACTS.map((x) => (
+          <rect key={x} x={x - 3} y={553} width={6} height={10} rx={1} fill="rgba(255,205,140,0.5)" />
+        ))}
+      </g>
 
       {BOUNDARIES.map((b) => {
         const active = crossed.has(b.id);
@@ -240,9 +386,9 @@ export function XRayMap({
           <g key={b.id} className={active ? styles.boundaryActive : undefined}>
             <path
               d={b.d}
-              stroke={active ? SIGNAL : "rgba(255,255,255,0.14)"}
+              stroke={active ? SIGNAL : b.id === "device" ? "none" : "rgba(255,255,255,0.14)"}
               strokeWidth={active ? 2 : 1}
-              strokeDasharray="5 5"
+              strokeDasharray={b.id === "device" ? undefined : "5 5"}
               filter={active ? "url(#xray-glow)" : undefined}
             />
             {b.label && (
@@ -323,6 +469,7 @@ export function XRayMap({
         </g>
       )}
     </svg>
+    </div>
   );
 }
 
@@ -347,7 +494,10 @@ function NodeBox({
 }) {
   const hex = LAYER_HEX[node.layer];
   const lit = state === "current" || state === "passed";
-  const opacity = state === "dim" ? 0.5 : state === "scenario" ? 0.65 : 1;
+  const opacity = state === "dim" ? 0.55 : state === "scenario" ? 0.7 : 1;
+  // Software is glass; hardware is a solid part on the board; the network is out there.
+  const glass = node.layer === "user" || node.layer === "kernel";
+  const solid = node.layer === "hardware";
   const tall = node.h >= 60;
   const labelY = node.bar ? 19 : tall ? 22 : compact ? node.h / 2 + 4 : node.h / 2 - 2;
   const subY = tall ? 38 : node.h / 2 + 12;
@@ -386,17 +536,22 @@ function NodeBox({
           stroke={SIGNAL}
         />
       )}
+      {solid && <rect width={node.w} height={node.h} rx={5} fill="#120e0a" />}
+      {glass && <rect width={node.w} height={node.h} rx={7} fill="url(#glass-chip)" />}
       <rect
         className={styles.box}
         width={node.w}
         height={node.h}
-        rx={7}
-        fill={lit ? alpha(hex, 0.2) : alpha(hex, 0.07)}
-        stroke={lit ? SIGNAL : state === "ahead" ? alpha(SIGNAL, 0.55) : alpha(hex, 0.5)}
-        strokeWidth={state === "current" ? 2.4 : lit ? 1.6 : state === "ahead" ? 1.3 : 1}
+        rx={glass ? 7 : 5}
+        fill={lit ? alpha(hex, 0.2) : alpha(hex, glass ? 0.05 : solid ? 0.06 : 0.07)}
+        stroke={lit ? SIGNAL : state === "ahead" ? alpha(SIGNAL, 0.55) : alpha(hex, solid ? 0.6 : 0.5)}
+        strokeWidth={state === "current" ? 2.4 : lit ? 1.6 : state === "ahead" ? 1.3 : solid ? 1.3 : 1}
         strokeDasharray={state === "ahead" ? "4 3" : undefined}
         filter={state === "current" ? "url(#xray-glow)" : undefined}
       />
+      {glass && !node.bar && (
+        <path d={`M 6 0.75 H ${node.w - 6}`} stroke="rgba(255,255,255,0.32)" strokeWidth={1} />
+      )}
       <Decoration node={node} />
       {node.bar ? (
         <text x={node.w / 2} y={labelY} textAnchor="middle" fontSize={12.5} fontWeight={600} fill="#e8edf2">

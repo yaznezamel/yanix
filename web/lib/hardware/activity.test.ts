@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 import type { NodeId, Step } from "@/lib/xray/types";
-import { IDLE, activityAt, linksBetween, shortestLinks, whereIs } from "./activity";
+import { COLD_MACHINE, INITIAL_APPS } from "@/lib/xray/apps";
+import { buildScenario } from "@/lib/xray/scenarios";
+import { IDLE, activityAt, coreIndex, linksBetween, shortestLinks, softwareOn, whereIs } from "./activity";
 import { TREE } from "./tree";
 
 function step(path: NodeId[]): Step {
@@ -103,5 +105,34 @@ describe("hardware activity", () => {
     expect(ids("ssd")).toEqual({ how: "is", parts: ["ssd"] });
     expect(ids("usbhc")).toEqual({ how: "is", parts: ["chipset.usb"] });
     expect(ids("display")).toEqual({ how: "is", parts: ["gpu", "monitor"] });
+  });
+});
+
+describe("the software a core runs", () => {
+  it("reads core numbers from part ids", () => {
+    expect(coreIndex("cpu.core2")).toBe(2);
+    expect(coreIndex("cpu.core2.l1d")).toBeNull();
+    expect(coreIndex("ram")).toBeNull();
+  });
+
+  it("names the thread the scheduler model put on each core while ./cores adds", () => {
+    const start = buildScenario({ kind: "runProgram", program: "cores" }, COLD_MACHINE, INITIAL_APPS);
+    const asking = start.steps.at(-1)!.ui!.program!;
+    const round = buildScenario({ kind: "programInput", text: "4" }, COLD_MACHINE, { ...INITIAL_APPS, program: asking });
+    const add = round.steps.find((s) => s.id === "add")!;
+    const last = add.path.length - 1;
+    expect([0, 1, 2, 3].map((core) => softwareOn(add, core, last)?.what)).toEqual([
+      "./cores: thread 4, add_up()",
+      "./cores: thread 1, add_up()",
+      "./cores: thread 2, add_up()",
+      "./cores: thread 3, add_up()",
+    ]);
+  });
+
+  it("says what code the signal is in for other traces, and which layer it belongs to", () => {
+    const step: Step = { id: "x", phase: "app", path: ["glibc", "syscall", "vfs"], title: "x", body: "x" };
+    expect(softwareOn(step, 0, 0)).toEqual({ what: "glibc", layer: "user" });
+    expect(softwareOn(step, 0, 2)).toEqual({ what: "VFS", layer: "kernel" });
+    expect(softwareOn(null, 0, 0)).toBeNull();
   });
 });

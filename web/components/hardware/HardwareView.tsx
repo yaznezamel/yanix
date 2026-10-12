@@ -12,7 +12,7 @@ import {
   useRef,
   useState,
 } from "react";
-import { activityAt, whereIs, type Activity } from "@/lib/hardware/activity";
+import { activityAt, coreIndex, softwareOn, whereIs, type Activity, type Software } from "@/lib/hardware/activity";
 import {
   FIT_MARGIN,
   NO_INSETS,
@@ -50,7 +50,7 @@ import {
 } from "@/lib/hardware/tree";
 import { NODES } from "@/lib/xray/nodes";
 import type { NodeId, Step } from "@/lib/xray/types";
-import { LAYER_NAME } from "@/components/lab/palette";
+import { LAYER_HEX, LAYER_NAME } from "@/components/lab/palette";
 import styles from "./hardware.module.css";
 import { ArtDefs } from "./art";
 import { Fades } from "./fades";
@@ -824,9 +824,14 @@ export function HardwareView({ step, reached, reduced, ref }: HardwareViewProps)
   const focused = TREE.byId.get(focus) ?? TREE.root;
   const trail = lineage(focused);
   const busy = step ? busiest(activity) : [];
-  // The program or kernel code the signal is in, which a core is running.
-  const here = step ? NODES[step.path[Math.min(reached, step.path.length - 1)]!] : null;
-  const running = here && (here.layer === "user" || here.layer === "kernel") ? here : null;
+  // The software a core runs: the thread the lab's scheduler model put there, or the code the signal is in.
+  const onCore = (id: string): Software | null => {
+    const core = coreIndex(id);
+    return core === null ? null : softwareOn(step, core, reached);
+  };
+  // For a part's card: the software its core runs, if it is a core or a unit inside one.
+  const cardCore = cardNode ? (coreIndex(cardNode.id) !== null ? cardNode : cardNode.parent) : null;
+  const cardSoftware = cardCore ? onCore(cardCore.id) : null;
 
   return (
     <div
@@ -949,7 +954,7 @@ export function HardwareView({ step, reached, reduced, ref }: HardwareViewProps)
           node={cardNode}
           activity={activity}
           active={step !== null}
-          running={running ? `${running.label} (${LAYER_NAME[running.layer].toLowerCase()})` : null}
+          running={cardSoftware ? `${cardSoftware.what} (${LAYER_NAME[cardSoftware.layer].toLowerCase()})` : null}
           by={card.by}
         />
       )}
@@ -995,11 +1000,7 @@ export function HardwareView({ step, reached, reduced, ref }: HardwareViewProps)
                     .map((q) => q.part.label)
                     .join(" › ")}
                 </button>
-                {running && p.part.kind === "core" && (
-                  <span className="text-lab-ink/85">
-                    running {running.label} ({LAYER_NAME[running.layer].toLowerCase()})
-                  </span>
-                )}
+                {p.part.kind === "core" && <SoftwareChip software={onCore(p.id)} />}
               </span>
             ))}
           </div>
@@ -1058,5 +1059,19 @@ function ControlButton({
         {children}
       </svg>
     </button>
+  );
+}
+
+/** The software a core runs, as a pane of glass like the software map's layers, tinted by its layer. */
+function SoftwareChip({ software }: { software: Software | null }) {
+  if (!software) return null;
+  return (
+    <span className="flex items-center gap-1.5 rounded-md border border-white/20 bg-white/[0.07] px-1.5 py-0.5 text-lab-ink shadow-[inset_0_1px_0_rgba(255,255,255,0.22)] backdrop-blur-sm">
+      <span className="text-lab-muted">running</span>
+      {software.what}
+      <span className="font-mono text-[10.5px]" style={{ color: LAYER_HEX[software.layer] }}>
+        {LAYER_NAME[software.layer].toLowerCase()}
+      </span>
+    </span>
   );
 }
