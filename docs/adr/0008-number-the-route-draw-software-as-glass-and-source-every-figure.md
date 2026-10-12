@@ -63,14 +63,32 @@ Route option 2, layer option 2, and figure options 2 and 4.
   stop's number. `XRayMap` draws the numbers, and lights each stop when the
   signal gets there (passed, current, ahead). The time per hop is equal
   rather than proportional to length, so short hops are not skipped.
+- A hop never cuts through a box it does not stop at: `web/lib/xray/route.ts`
+  keeps it straight when nothing is in the way, and otherwise takes the
+  shortest way round the corners of the boxes that are (a visibility graph).
+  Only the system call bar may be crossed, by hops between user space and the
+  layers below. A route meets the bar where the way on is clear, and the
+  stretch the signal runs along the bar is lit. A test checks every hop of
+  every trace.
+- Each stop's number sits on its box's top left corner, outside the label,
+  and is drawn above the moving packet, which rides below and to the right
+  of the signal. With reduced motion the signal steps from stop to stop
+  instead of gliding, so the order still shows.
 - The board, panes and contact rail are one memoised SVG layer, so the glass
   costs about 1 fps in the headless frame-rate check.
 - `Step.data` holds a step's amount and what it is. When a step has packets
-  whose headers all have sizes, `dataOf()` works the amount out from them
-  instead, adding the 4-byte Ethernet checksum on the wire. `Step.aws` holds a
-  service name and a short note (60 words at most, tested). When packets fill
-  the panel beside the story, a row of chips under the route shows the amount
-  and the service, and each chip scrolls to its full sentence.
+  whose headers all have sizes, `dataOf()` works the amount out from its
+  biggest packet instead, and says what the bytes are. An Ethernet frame is
+  counted as it goes on the wire: padded to the 60-byte minimum, plus its
+  4-byte checksum.
+- `Step.aws` holds a service name, a short note (60 words at most, tested)
+  and, for a note with a figure, a link to AWS's page for it. When packets
+  fill the panel beside the story, chips in the story's header give the
+  amount and the service, and each jumps to its full sentence. The step's
+  title and a one-line route (the stop before, the current one, the next)
+  stay in view while the text scrolls, so on a laptop the explanation is
+  never pushed out of sight. Abbreviations are spelled out on hover where a
+  text first uses them.
 
 ## Sources
 
@@ -143,8 +161,8 @@ The other AWS notes describe documented behaviour without figures.
 - The measured TLS sizes belong to one browser version. Chromium changes its
   ClientHello often (key shares, GREASE, extensions), so re-measure when the
   lab's reference browser moves on.
-- AWS quotas and defaults change. The AWS cards don't link their sources in
-  the lab yet; this list does. Revisit if a card's figure is questioned: a
-  `source` link on `Step.aws` would put it next to the note.
+- AWS quotas and defaults change. Each card with a figure links the AWS page
+  it comes from, and this list repeats them, so a figure can be checked
+  again.
 - AWS notes are comparisons, not claims that AWS runs the lab's code, except
   where it does: EC2's ENA driver and NVMe devices are in the same kernel.
