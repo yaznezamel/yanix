@@ -2,13 +2,20 @@
 
 import { AnimatePresence, motion } from "motion/react";
 import { useState } from "react";
-import { packetBytes } from "@/lib/xray/packets";
-import type { Header, Packet } from "@/lib/xray/types";
+import { dataOf, packetBytes } from "@/lib/xray/packets";
+import type { AwsNote, Header, Packet, Step } from "@/lib/xray/types";
 import { HEADER_COLOR, HEADER_TAG } from "./palette";
+
+// The panel beside the story: the data a step moves, and the same idea on
+// AWS. A packet, USB report or disk command in flight shows field by field;
+// otherwise the panel says how much the step moves, worked out from the
+// model. The AWS card follows, when the step has one.
 
 interface PacketPanelProps {
   packet: Packet | null;
   previous: Packet | null;
+  /** The step under way, for what it moves and its AWS note. */
+  step: Step | null;
 }
 
 const sameHeader = (a: Header, b: Header) => a.kind === b.kind && a.title === b.title;
@@ -55,22 +62,56 @@ function summary(header: Header): string {
   }
 }
 
-export function PacketPanel({ packet, previous }: PacketPanelProps) {
+export function PacketPanel({ packet, previous, step }: PacketPanelProps) {
+  return (
+    <section aria-label="Data" className="flex h-full min-h-0 flex-col gap-3 overflow-y-auto p-4">
+      {packet ? <PacketView packet={packet} previous={previous} /> : <Moved step={step} />}
+      {/* A step with packets shows its AWS note in the story instead, so it never jumps mid-step. */}
+      {step?.aws && (step.frames?.length ?? 0) === 0 && <AwsCard aws={step.aws} />}
+    </section>
+  );
+}
+
+/** No packet in flight: how much the step moves, in big type, or that nothing does. */
+function Moved({ step }: { step: Step | null }) {
+  const data = step ? dataOf(step) : null;
+  return (
+    <div className="flex flex-col gap-1.5">
+      <h2 className="font-mono text-[11px] uppercase tracking-[0.14em] text-lab-muted">Data</h2>
+      {data ? (
+        <>
+          <p className="font-mono text-[22px] font-semibold leading-tight text-lab-ink">{data.amount}</p>
+          <p className="text-[13px] leading-snug text-lab-ink/80">{data.what}</p>
+        </>
+      ) : (
+        <>
+          <p className="text-[13px] leading-snug text-lab-ink/80">Nothing in flight in this step.</p>
+          <p className="text-[12px] leading-snug text-lab-muted">
+            When data moves between layers, it shows up here: packets, USB reports, input events, disk commands.
+          </p>
+        </>
+      )}
+    </div>
+  );
+}
+
+/** The step's idea where it appears on AWS. */
+export function AwsCard({ aws }: { aws: AwsNote }) {
+  return (
+    <div className="rounded-lg border border-[#ff9900]/35 bg-[#ff9900]/[0.06] px-3 py-2.5">
+      <p className="flex flex-wrap items-center gap-2">
+        <span className="font-mono text-[10.5px] uppercase tracking-[0.14em] text-[#ffb547]">On AWS</span>
+        <span className="rounded-full border border-[#ff9900]/40 px-2 py-0.5 text-[11.5px] font-semibold text-[#ffd08a]">
+          {aws.service}
+        </span>
+      </p>
+      <p className="mt-1.5 text-[13px] leading-relaxed text-lab-ink/85">{aws.text}</p>
+    </div>
+  );
+}
+
+function PacketView({ packet, previous }: { packet: Packet; previous: Packet | null }) {
   const [showAll, setShowAll] = useState(false);
-
-  if (!packet) {
-    return (
-      <section aria-label="Data" className="flex h-full flex-col gap-1.5 px-4 py-3">
-        <h2 className="font-mono text-[11px] uppercase tracking-[0.14em] text-lab-muted">Data</h2>
-        <p className="text-[13px] leading-snug text-lab-ink/80">Nothing in flight in this step.</p>
-        <p className="text-[12px] leading-snug text-lab-muted">
-          When data moves between layers, it shows up here: packets, USB reports, input events, disk
-          commands.
-        </p>
-      </section>
-    );
-  }
-
   const bytes = packetBytes(packet);
   const isNew = (header: Header) =>
     previous !== null && !previous.headers.some((h) => sameHeader(h, header));
@@ -78,7 +119,7 @@ export function PacketPanel({ packet, previous }: PacketPanelProps) {
   const anyFocus = packet.headers.some((h, i) => isNew(h) || (changes[i]?.size ?? 0) > 0);
 
   return (
-    <section aria-label="Data" className="flex h-full min-h-0 flex-col gap-2.5 p-4">
+    <div className="flex flex-col gap-2.5">
       <div className="flex items-center justify-between gap-3">
         <h2 className="font-mono text-[11px] uppercase tracking-[0.14em] text-lab-muted">
           {packet.label ?? "Packet"}
@@ -125,7 +166,7 @@ export function PacketPanel({ packet, previous }: PacketPanelProps) {
         </AnimatePresence>
       </div>
 
-      <ol className="flex min-h-0 flex-col gap-1.5 overflow-y-auto pr-1">
+      <ol className="flex flex-col gap-1.5">
         <AnimatePresence initial={false}>
           {packet.headers.map((header, i) => {
             const changed = changes[i] ?? new Set<string>();
@@ -178,6 +219,6 @@ export function PacketPanel({ packet, previous }: PacketPanelProps) {
           })}
         </AnimatePresence>
       </ol>
-    </section>
+    </div>
   );
 }

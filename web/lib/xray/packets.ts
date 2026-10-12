@@ -1,4 +1,4 @@
-import type { Header, Packet, PacketFrame } from "./types";
+import type { Header, Packet, PacketFrame, Step, StepData } from "./types";
 
 // Addresses come from the ranges reserved for documentation (RFC 5737 for
 // IPv4, RFC 7042 for MAC addresses), so nothing here points at a real host.
@@ -211,6 +211,21 @@ export function framesAround(
     if (f.at <= index) i = k;
   });
   return { current: frames[i]?.packet ?? null, previous: i > 0 ? (frames[i - 1]?.packet ?? null) : null };
+}
+
+/**
+ * What a step moves: its own figure, or, for a step that carries a packet,
+ * report or command of known size, that packet's bytes. Ethernet frames add
+ * a 4-byte checksum (the FCS) on the wire.
+ */
+export function dataOf(step: Step): StepData | null {
+  if (step.data) return step.data;
+  const packet = step.frames?.at(-1)?.packet;
+  if (!packet) return null;
+  const bytes = packetBytes(packet);
+  if (bytes === null) return null;
+  const wire = packet.headers[0]?.kind === "eth";
+  return { amount: `${bytes} bytes${wire ? " + 4" : ""}`, what: `${packet.caption}${wire ? ", and a 4-byte checksum on the wire" : ""}` };
 }
 
 export function packetBytes(packet: Packet): number | null {

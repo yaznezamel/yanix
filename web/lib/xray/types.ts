@@ -313,6 +313,23 @@ export interface Step {
    * threads of ./cores. Each user or kernel box on the path stands for them.
    */
   cores?: number[];
+  /** What the step moves, with how much of it: worked out from the model or a measurement, never guessed. */
+  data?: StepData;
+  /** The same idea where it appears on AWS, for a reader who knows the cloud. Only where the comparison holds. */
+  aws?: AwsNote;
+}
+
+export interface StepData {
+  /** How much, with its unit: "2 bytes", "977 pages (3.8 MiB)". */
+  amount: string;
+  /** What it is, and from where to where. */
+  what: string;
+}
+
+export interface AwsNote {
+  /** The AWS service or feature, as AWS names it. */
+  service: string;
+  text: string;
 }
 
 export type ScenarioRequest =

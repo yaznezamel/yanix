@@ -48,10 +48,14 @@ const LEFT_BASIS: Record<LayoutMode, string> = {
   machine: "30%",
 };
 
-/** Height kept under the screen on wide screens: the panels' minimum, the gap and the bezel. */
+/**
+ * Height kept under the screen on wide screens: the panels' minimum, the gap
+ * and the bezel. While a trace plays (Split) the story gets more of it: the
+ * explanation matters more than the size of the simulated screen.
+ */
 const PANELS_RESERVE: Record<LayoutMode, string> = {
   screen: "230px",
-  split: "230px",
+  split: "300px",
   machine: "382px",
 };
 
@@ -403,11 +407,8 @@ export function DesktopLab() {
             />
             <div
               className={`grid min-h-0 flex-1 gap-3 ${
-                layout === "machine"
-                  ? packet
-                    ? "xl:grid-cols-1 xl:grid-rows-[minmax(170px,1.3fr)_minmax(170px,1fr)]"
-                    : "xl:grid-cols-1 xl:grid-rows-[minmax(170px,1fr)_auto]"
-                  : "md:grid-cols-2"
+                // Stacked in the Machine layout: the story keeps the larger share, the data panel scrolls.
+                layout === "machine" ? "xl:grid-cols-1 xl:grid-rows-[minmax(190px,1.3fr)_minmax(150px,1fr)]" : "md:grid-cols-2"
               }`}
             >
               <div id="lab-story" className={panelClass}>
@@ -423,7 +424,7 @@ export function DesktopLab() {
                 />
               </div>
               <div className={panelClass}>
-                <PacketPanel packet={packet} previous={previousPacket} />
+                <PacketPanel packet={packet} previous={previousPacket} step={step} />
               </div>
             </div>
           </div>

@@ -199,6 +199,9 @@ describe("timing", () => {
     expect(readMs(step(words(50)), 1)).toBe(1200 + 51 * 250);
     expect(readMs(step("Short."), 1)).toBe(3500);
     expect(readMs(step(words(200)), 1)).toBe(22000);
+    // An AWS note adds its words.
+    const noted: Step = { ...step(words(20)), aws: { service: "Amazon SQS", text: words(10) } };
+    expect(readMs(noted, 1)).toBe(1200 + 31 * 250);
   });
 });
 

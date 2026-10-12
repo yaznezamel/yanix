@@ -1,13 +1,15 @@
 "use client";
 
 import { AnimatePresence, motion } from "motion/react";
-import { useCallback, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { whereIs } from "@/lib/hardware/activity";
 import { TREE, lineage } from "@/lib/hardware/tree";
 import { NODES } from "@/lib/xray/nodes";
+import { dataOf } from "@/lib/xray/packets";
 import type { CodeRef, NodeId, Step } from "@/lib/xray/types";
 import { CORES_C } from "@/lib/xray/cores/source";
 import { MARKS_C, codeAt } from "@/lib/xray/marks/source";
+import { AwsCard } from "./PacketPanel";
 import { LAYER_HEX, LAYER_NAME, PHASE_NAME, TIMESCALE } from "./palette";
 
 interface NarrationProps {
@@ -162,10 +164,25 @@ export function Narration({
  * the signal gets there.
  */
 function Route({ path, reached }: { path: NodeId[]; reached: number }) {
-  if (path.length < 2) return null;
+  const strip = useRef<HTMLOListElement>(null);
   const at = Math.min(reached, path.length - 1);
+  // One line that scrolls sideways: keep the stop the signal is at in view.
+  useEffect(() => {
+    const el = strip.current;
+    const current = el?.querySelector<HTMLElement>("[aria-current='step']");
+    if (!el || !current) return;
+    const left = current.offsetLeft - el.offsetLeft;
+    if (left < el.scrollLeft || left + current.offsetWidth > el.scrollLeft + el.clientWidth) {
+      el.scrollTo({ left: Math.max(0, left - 24) });
+    }
+  }, [at]);
+  if (path.length < 2) return null;
   return (
-    <ol aria-label="Route" className="flex flex-wrap items-center gap-x-0.5 gap-y-1 text-[11.5px] leading-none">
+    <ol
+      ref={strip}
+      aria-label="Route"
+      className="flex shrink-0 items-center gap-x-0.5 overflow-x-auto whitespace-nowrap pb-0.5 text-[11.5px] leading-none [scrollbar-width:thin]"
+    >
       {path.map((id, i) => {
         const state = i < at ? "done" : i === at ? "current" : "ahead";
         return (
@@ -255,6 +272,7 @@ function StepStory({
   // The scrolling text is a new element for every step; the cue follows it.
   const { watch, more, scrollDown } = useMoreCue();
   const layers = Array.from(new Set(step.path.map((id) => NODES[id].layer)));
+  const data = dataOf(step);
   // A step of ./marks: the line of C it is about.
   const program = step.ui?.program;
   const code = program && program.stage !== "exited" ? codeAt(program.kind === "cores" ? CORES_C : MARKS_C, program.at) : null;
@@ -316,6 +334,15 @@ function StepStory({
           <p className="text-[14px] leading-relaxed text-lab-ink/85 [font-variant-ligatures:none] [font-feature-settings:'calt'_0]">
             {step.body}
           </p>
+          {data && (
+            <p className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5 rounded-md border border-signal/25 bg-signal/[0.05] px-2.5 py-1.5">
+              <span className="font-mono text-[10.5px] uppercase tracking-[0.12em] text-signal">Data</span>
+              <span className="font-mono text-[14px] font-semibold text-lab-ink">{data.amount}</span>
+              <span className="text-[12.5px] leading-snug text-lab-ink/80">{data.what}</span>
+            </p>
+          )}
+          {/* A step with packets keeps the panel beside the story for them: its AWS note goes here. */}
+          {step.aws && (step.frames?.length ?? 0) > 0 && <AwsCard aws={step.aws} />}
           <div className="flex flex-wrap items-center gap-1.5">
             {layers.map((layer) => (
               <span

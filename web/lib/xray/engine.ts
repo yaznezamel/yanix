@@ -468,7 +468,9 @@ export function travelMs(step: Step, speed: Speed): number {
 }
 
 export function readMs(step: Step, speed: Speed): number {
-  const words = `${step.title} ${step.body}`.split(/\s+/).length;
+  // The AWS note and the data line are read too.
+  const text = [step.title, step.body, step.data?.what, step.aws?.text].filter(Boolean).join(" ");
+  const words = text.split(/\s+/).filter(Boolean).length;
   return Math.min(READ_MAX_MS, Math.max(READ_MIN_MS, READ_BASE_MS + words * READ_MS_PER_WORD)) / speed;
 }
 

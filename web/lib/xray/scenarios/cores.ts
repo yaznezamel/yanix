@@ -117,6 +117,8 @@ const T = {
 } satisfies Record<string, CodeRef>;
 
 const hex = (n: number) => `0x${n.toString(16)}`;
+const grouped = (n: number) => n.toLocaleString("en-US");
+const MIB = (bytes: number) => `${(bytes / 1048576).toFixed(1)} MiB`;
 const coresNamed = (cores: number[]) =>
   cores.length === 1 ? `core ${cores[0]}` : `cores ${cores.slice(0, -1).join(", ")} and ${cores.at(-1)}`;
 const english = ["no", "one", "two", "three", "four"];
@@ -170,6 +172,7 @@ function runSteps(t: Tracer<CoresState>, layout: CoresLayout): void {
       body: `main() saves the caller's rbp and moves rsp down ${CORES_MAIN.size} bytes: room for marks, line, threads, per, total, and the arrays ids[4] and slices[4] that the threads will use. Nothing is cleared, apart from the canary that the stack protector checks before main() returns.`,
       code: [CODE.startMain],
       timescale: "ns",
+      data: { amount: `${CORES_MAIN.size} bytes`, what: "of stack for main()'s frame: ids[4] is 32 of them, slices[4] 160, the rest the other locals" },
     },
     { inMain: true, at: LINE.main },
     [CORES_CHANGE.main],
@@ -193,6 +196,14 @@ function runSteps(t: Tracer<CoresState>, layout: CoresLayout): void {
       body: `The first malloc() sets up the tcache, which needs a heap: brk() makes one of 132 KiB, as for ./marks. But 4,000,000 bytes is far above M_MMAP_THRESHOLD (128 KiB by default), so the array is not carved from the heap: sysmalloc() asks the kernel for a mapping of its own with mmap(), ${ARRAY_MAP} bytes, the array and a 16-byte header rounded up to ${ARRAY_PAGES} whole pages. The kernel only records the area: no RAM yet.`,
       code: [CODE.malloc, T.mmapChunk, T.mmap],
       timescale: "us",
+      data: {
+        amount: `${ARRAY_PAGES} pages (${MIB(ARRAY_MAP)})`,
+        what: `of address space for the array: ${grouped(MARKS * 4)} bytes asked, ${grouped(ARRAY_MAP)} mapped with the header and the rounding; no RAM yet`,
+      },
+      aws: {
+        service: "Amazon DynamoDB",
+        text: "Big things get their own storage: a DynamoDB item can be at most 400 KB, so large payloads go to S3 with a pointer kept in the table. malloc() treats big blocks the same way: from 128 KiB up each gets a mapping of its own, and the heap keeps the small ones.",
+      },
     },
     { heap, mapped: true, at: LINE.malloc },
     [CORES_CHANGE.marks, CORES_CHANGE.array, CORES_CHANGE.heap],
@@ -217,6 +228,14 @@ function runSteps(t: Tracer<CoresState>, layout: CoresLayout): void {
       body: `The loop writes a million ints, 4 bytes each, one after the other. Each time it reaches a page that nothing has written yet, the CPU raises a page fault and the kernel maps a zeroed page of RAM there: ${ARRAY_PAGES} pages, so almost a thousand page faults, the price of first touching memory. Between them, the loop runs without the kernel.`,
       code: [CODE.fault, CODE.anonPage],
       timescale: "ms",
+      data: {
+        amount: `${grouped(MARKS * 4)} bytes`,
+        what: `written, a million 4-byte marks: ${ARRAY_PAGES} page faults, each mapping a zeroed 4 KiB page`,
+      },
+      aws: {
+        service: "Amazon EBS",
+        text: "AWS suggests initializing a volume restored from a snapshot, reading every block once with dd or fio, so that production traffic does not pay the first-access cost. The fill loop pays its page faults up front the same way: when the threads add, every page is already there.",
+      },
     },
     { filled: true, at: LINE.fill },
     [CORES_CHANGE.array],
@@ -240,6 +259,7 @@ function runSteps(t: Tracer<CoresState>, layout: CoresLayout): void {
       body: "fgets(line, sizeof line, stdin) asks for a line. stdin's buffer is made now, from the heap: no system call, the heap has room.",
       code: [CODE.fgets, CODE.doallocate],
       timescale: "us",
+      data: { amount: "1,040 bytes", what: "stdin's buffer, 1,024 bytes and its size field, carved from the heap: no system call" },
     },
     { heap: stdin.heap, at: LINE.fgets },
     [CORES_CHANGE.heap],
@@ -264,6 +284,7 @@ function roundSteps(t: Tracer<CoresState>, layout: CoresLayout, typed: string, t
       }`,
       code: [CODE.fgets, CODE.sscanf],
       timescale: "ns",
+      data: { amount: "4 + 8 bytes", what: `threads = ${threads} (an int) and per = ${grouped(per)} (a size_t), written on main()'s stack` },
     },
     { line: fgetsInto(t.state.line, typed), threads, per, workers: [], stale, at: LINE.per },
     [CORES_CHANGE.line, CORES_CHANGE.threads, CORES_CHANGE.per],
@@ -294,6 +315,13 @@ function roundSteps(t: Tracer<CoresState>, layout: CoresLayout, typed: string, t
         : `${fill} allocate_stack() asks the kernel for 8 MiB and 4 KiB with mmap(), with no access at all, then mprotect() makes all but the lowest page readable and writable. That page stays a guard: a thread that runs off the end of its stack hits it and crashes, instead of silently overwriting its neighbour. glibc puts the thread's descriptor at the top of the stack and its address into ids[0]: that is the pthread_t, ${hex(mapping.top - DESCRIPTOR)}.`,
       code: firstStack.reused ? [T.create, T.cachedStack] : [T.create, T.allocateStack, T.mmap, T.mprotect],
       timescale: "us",
+      data: firstStack.reused
+        ? { amount: "40 bytes", what: "slices[0] filled in; the stack comes from glibc's cache, with no system call" }
+        : { amount: "8 MiB + 4 KiB", what: `of address space for the stack and its guard page (${hex(STACK_MAP)}), and slices[0] (40 bytes) filled in; no RAM for the stack yet` },
+      aws: {
+        service: "Amazon EC2 On-Demand Capacity Reservations",
+        text: "A thread's 8 MiB stack is reserved, not used, like a Capacity Reservation, which holds capacity for instances you have not launched yet. RAM arrives only for the stack pages the thread really touches: a few KiB for add_up().",
+      },
     },
     {
       slices: setAt(t.state.slices, 0, sliceFor(first)),
@@ -326,6 +354,11 @@ function roundSteps(t: Tracer<CoresState>, layout: CoresLayout, typed: string, t
       body: `clone3() asks the kernel for a new task that shares almost everything with main(): the same memory, the same open files and signal handlers, the same process. Only its registers and its stack are its own. It starts in start_thread(), which calls add_up(&slices[0]). wake_up_new_task() then asks the scheduler for a core: core ${placed.core} is idle, so thread 1 starts there, while main() goes on on core ${main}.`,
       code: [T.cloneInternal, T.copyProcess, T.newTask, T.placeTask],
       timescale: "us",
+      data: { amount: "0 bytes copied", what: "the new thread shares main()'s memory: only a task in the kernel and a set of registers are new" },
+      aws: {
+        service: "Amazon ECS",
+        text: "Threads of one process are like the containers of one ECS task in awsvpc mode: they share one network interface and can share volumes, yet each runs on its own. Threads share even more, the whole address space; each keeps only its registers and its stack.",
+      },
     },
     { cores: placed.cores, workers: [{ ...first, core: placed.core, state: "running" }] },
     [threadKey(1)],
@@ -372,6 +405,14 @@ function roundSteps(t: Tracer<CoresState>, layout: CoresLayout, typed: string, t
         } Creating a thread takes microseconds; the adding takes milliseconds, so they all start almost together.`,
         code: [T.create, T.cloneInternal, T.newTask, T.placeTask],
         timescale: "us",
+        data: {
+          amount: `${threads - 1} more threads`,
+          what: `${threads - 1} stacks${fromCache}, ${threads - 1} clone3() calls, and slices[1] to slices[${threads - 1}] filled in, 40 bytes each`,
+        },
+        aws: {
+          service: "Amazon EC2",
+          text: "On EC2 a vCPU is usually one hardware thread of a physical core, so a 4-vCPU x86 instance has 2 cores. Instances powered by AWS Graviton processors are the exception: each vCPU is a whole core, so a c7g.xlarge (4 vCPUs) gives these threads 4 real cores.",
+        },
       },
       {
         cores,
@@ -408,6 +449,11 @@ function roundSteps(t: Tracer<CoresState>, layout: CoresLayout, typed: string, t
       }`,
       code: [T.join, T.futexWait],
       timescale: "us",
+      data: { amount: "4 bytes", what: "the futex word main() sleeps on: thread 1's ID, until the kernel zeroes it" },
+      aws: {
+        service: "AWS Step Functions",
+        text: "pthread_join() waits like a Step Functions task with .waitForTaskToken: the workflow pauses and costs nothing while it waits, and goes on when the worker calls SendTaskSuccess. Here the callback is the futex wake the kernel sends when thread 1 exits.",
+      },
     },
     {
       ...sleeping,
@@ -437,6 +483,14 @@ function roundSteps(t: Tracer<CoresState>, layout: CoresLayout, typed: string, t
           : `Each thread runs add_up() on its own core (${coresNamed(busyCores)}), with its own registers and its own stack, over its own part of the same array: sum += slice->marks[i], a load and an add for each mark. Each core loads through its own L1 and L2 caches; what they don't hold comes from the shared L3 cache or from RAM, through the one memory controller every core uses. That sharing is one reason ${threads} threads are faster than one, but not ${threads} times faster.`,
       code: [T.startThread],
       timescale: "ms",
+      data: {
+        amount: `${grouped(MARKS * 4)} bytes read`,
+        what: `a million 4-byte marks, ${grouped(per)} per thread, on ${threads === 1 ? "one core" : `${threads} cores at once`}; each thread keeps an 8-byte sum`,
+      },
+      aws: {
+        service: "AWS Lambda",
+        text: "This is the fan-out you build with Lambda or an EMR job: split the input into equal parts, hand each worker its own part, let them run at once, and combine their small results. Here each part is a slice of one array in shared memory, and each result is an 8-byte sum.",
+      },
     },
     { at: LINE.addUp },
     busy.map((w) => threadKey(w.n)),
@@ -463,6 +517,7 @@ function roundSteps(t: Tracer<CoresState>, layout: CoresLayout, typed: string, t
         body: `${names} had as much work and started microseconds after thread 1, so ${early.length === 1 ? "it has" : "they have"} finished by now, or ${early.length === 1 ? "is" : "are"} about to: each pthread_join() returns at once, or after a short sleep, and glibc keeps each stack for later. main() adds ${early.length === 1 ? "its sum" : "their sums"} to total.`,
         code: [T.join, T.queueStack],
         timescale: "us",
+        data: { amount: `${early.length * 8} bytes`, what: `${early.length === 1 ? "one sum" : `${early.length} sums`}, 8 bytes each, added to total` },
       },
       {
         cores,
@@ -488,6 +543,7 @@ function roundSteps(t: Tracer<CoresState>, layout: CoresLayout, typed: string, t
         body: `Thread ${last.n} only got a core when main() first went to sleep, so it is still adding. pthread_join(ids[${last.n - 1}]) waits on its futex, and main() sleeps again.`,
         code: [T.join, T.futexWait],
         timescale: "us",
+        data: { amount: "4 bytes", what: `thread ${last.n}'s ID word: main() sleeps on it until the kernel zeroes it` },
       },
       { ...sleepMain(t.state), at: LINE.join },
     );
@@ -534,6 +590,7 @@ function finishSteps(t: Tracer<CoresState>, layout: CoresLayout, n: number, firs
       } start_thread() gives back the RAM of the stack it no longer needs with madvise(), and calls exit(), which ends this thread only. As clone3() asked, the kernel zeroes the thread-ID word and wakes the futex: main() wakes up, and the scheduler picks it a core, preferring an idle one near where it last ran: core ${woke.core}.`,
       code: [T.getcpu, T.adviseStack, T.dontneed, T.mmRelease, T.futexWake, T.wakeIdle],
       timescale: "us",
+      data: { amount: "12 bytes", what: `slices[${n - 1}].sum (8 bytes) and .cpu (4 bytes), written into main()'s stack; most of the thread's stack RAM given back` },
     },
     {
       cores: woke.cores,
@@ -555,6 +612,7 @@ function finishSteps(t: Tracer<CoresState>, layout: CoresLayout, n: number, firs
       body: `Back in main(): pthread_join() sees the thread-ID word at 0, keeps thread ${n}'s stack in glibc's cache for later, and returns. total += slices[${n - 1}].sum adds ${sum} to the total.`,
       code: [T.join, T.queueStack],
       timescale: "us",
+      data: { amount: "8 bytes", what: `slices[${n - 1}].sum, ${grouped(sum)}, read from the stack and added to total` },
     },
     {
       workers: joined,
@@ -587,6 +645,7 @@ function rejectSteps(t: Tracer<CoresState>, layout: CoresLayout, typed: string):
           : `fgets() copies your line into line[16], and sscanf() stores ${threads} in threads. That is not from 0 to ${MAX_THREADS}, so continue skips the rest of the loop, back to its top: the question again.`,
       code: [CODE.fgets, CODE.sscanf],
       timescale: "ns",
+      data: threads === null ? { amount: "0 bytes", what: "no number parsed: threads keeps its old value" } : { amount: "4 bytes", what: `threads = ${threads}: parsed, stored, then refused` },
     },
     { line: fgetsInto(t.state.line, typed), ...(threads === null ? {} : { threads }), at: LINE.sscanf },
     threads === null ? [CORES_CHANGE.line] : [CORES_CHANGE.line, CORES_CHANGE.threads],
@@ -631,6 +690,11 @@ function endSteps(t: Tracer<CoresState>, layout: CoresLayout): void {
       body: `The array's chunk has a mapping of its own, so free() does not keep it for later, as it keeps small chunks: munmap_chunk() hands the whole mapping back with munmap(), and its ${ARRAY_PAGES} pages of RAM are free again at once.`,
       code: [CODE.free, T.munmapChunk, T.munmap],
       timescale: "us",
+      data: { amount: `${ARRAY_PAGES} pages (${MIB(ARRAY_MAP)})`, what: "back to the kernel in one munmap(): the RAM is free at once" },
+      aws: {
+        service: "Amazon EBS",
+        text: "Like deleting a volume rather than emptying it: the array's whole mapping goes back in one call. The small chunks that free() keeps (stdout's and stdin's buffers) stay with malloc() for reuse instead.",
+      },
     },
     { mapped: false, filled: false, at: LINE.free },
     [CORES_CHANGE.array, CORES_CHANGE.marks],

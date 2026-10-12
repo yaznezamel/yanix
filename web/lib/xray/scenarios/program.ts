@@ -1,3 +1,4 @@
+import { MAPPED } from "../marks/layout";
 import { dataFrame, vma } from "../structs";
 import type { CodeRef, Header, NodeId, Program, Step, TermLine } from "../types";
 import { keysStep } from "./common";
@@ -87,6 +88,8 @@ export function syscall(title: string, fields: Header["fields"]): Header {
 
 const encoder = new TextEncoder();
 const byteLength = (text: string) => encoder.encode(text).length;
+const plural = (n: number, one: string, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
+const kib = (bytes: number) => `${(bytes / 1024).toLocaleString("en-US", { maximumFractionDigits: 1 })} KiB`;
 
 // ---------------------------------------------------------------- tracing
 
@@ -146,6 +149,8 @@ export interface StartOptions {
   stack: number;
   /** More to say about what the C library brings, if anything. */
   libc?: string;
+  /** How much of the program file is mapped, where it was measured (/proc/PID/maps). */
+  exeBytes?: number;
 }
 
 const hex = (n: number) => `0x${n.toString(16)}`;
@@ -161,6 +166,14 @@ export function startSteps<S extends Program>(t: Tracer<S>, o: StartOptions): vo
     body: "The terminal writes the line into its end of the pseudo-terminal. The kernel's TTY layer delivers it to bash, which reads it from /dev/pts/N as if from a real keyboard.",
     code: [CODE.ptyWrite, { project: "linux", path: "drivers/tty/tty_io.c" }],
     timescale: "us",
+    data: {
+      amount: plural(byteLength(`${o.command}\n`), "byte"),
+      what: `${quoted(`${o.command}\n`)}: from the terminal into the pseudo-terminal, and out of its other end to bash`,
+    },
+    aws: {
+      service: "AWS Systems Manager Session Manager",
+      text: "A Session Manager shell on an EC2 instance works the same way: the SSM Agent starts the shell on a pseudo-terminal like this one and relays its bytes to your browser or CLI over an encrypted channel, with no SSH port open.",
+    },
   });
   t.add(
     {
@@ -171,6 +184,14 @@ export function startSteps<S extends Program>(t: Tracer<S>, o: StartOptions): vo
       body: `The command has a slash in it, so bash runs that file rather than searching PATH: it creates a child with clone(), and the child calls execve("${o.command}"). ${o.name} inherits bash's open files, so its standard input, output and error (0, 1 and 2) are the same pseudo-terminal.`,
       code: [CODE.clone, CODE.execve],
       timescale: "us",
+      data: {
+        amount: "0 pages copied",
+        what: "clone() gives the child bash's memory copy-on-write, page tables only; execve() then drops it all for the new program",
+      },
+      aws: {
+        service: "Amazon EC2",
+        text: "execve() is to a program file what RunInstances is to an AMI: a stored image becomes something running. The clone() before it is cheap for the reason a new EBS snapshot is: what the copy shares with the original is not duplicated until one side changes it.",
+      },
     },
     shared({ stage: "running" }),
   );
@@ -194,6 +215,14 @@ export function startSteps<S extends Program>(t: Tracer<S>, o: StartOptions): vo
     body: "execve() throws away the copy of bash's memory and builds a new map: the program's code and data from the ELF file, the dynamic linker ld.so, and a stack at the top holding the arguments and the environment. There is no heap yet: the program break, the end of the heap, starts at a random distance past the program's data. ASLR picks all of these addresses at random, so they change on every run.",
     code: [CODE.execve, CODE.elf, CODE.argPages],
     timescale: "us",
+    data: {
+      amount: "0 bytes read",
+      what: `the program${o.exeBytes ? ` (${kib(o.exeBytes)} of it)` : ""}, ld.so (${kib(MAPPED.ld)}) and a stack are mapped, but nothing is read yet: each page comes in the first time it is touched`,
+    },
+    aws: {
+      service: "Amazon EBS",
+      text: "A volume created from an EBS snapshot can be attached and used at once, but each block is fetched from Amazon S3 the first time it is read, which is why AWS suggests reading the whole volume once (initializing it) before it serves traffic. A mapped program behaves the same way: usable at once, each page loaded on first touch.",
+    },
   });
   t.add({
     id: "ldso",
@@ -207,6 +236,14 @@ export function startSteps<S extends Program>(t: Tracer<S>, o: StartOptions): vo
       { project: "glibc", path: "csu/libc-start.c", symbol: "__libc_start_main" },
     ],
     timescale: "us",
+    data: {
+      amount: kib(MAPPED.libc),
+      what: "of libc.so.6 mapped into the process (0x206000 bytes, measured). Its code pages are the same pages of RAM in every process that uses it: the page cache holds one copy",
+    },
+    aws: {
+      service: "AWS Lambda layers",
+      text: "A shared library is packaged once and used by many programs, as a Lambda layer is published once and added to many functions instead of being bundled into each one's deployment package.",
+    },
   });
 }
 
@@ -219,7 +256,7 @@ export function startSteps<S extends Program>(t: Tracer<S>, o: StartOptions): vo
 export function typedSteps<S extends Program>(t: Tracer<S>, typed: string, line: number, stdin: string, waking: Partial<S> = {}): void {
   const shown = typed.length > 24 ? `${typed.slice(0, 24)}…` : typed;
   const bytes = byteLength(typed) + 1;
-  t.add(keysStep("key", "terminal", typed === "" ? "You press Enter" : `You type ${shown} and press Enter`, "Terminal"), shared({ at: line }));
+  t.add(keysStep("key", "terminal", typed === "" ? "You press Enter" : `You type ${shown} and press Enter`, "Terminal", typed), shared({ at: line }));
   t.add(
     {
       id: "echo",
@@ -230,6 +267,10 @@ export function typedSteps<S extends Program>(t: Tracer<S>, typed: string, line:
       body: "The terminal writes each key into its end of the pseudo-terminal. The line discipline is in canonical mode: it keeps the characters in a line buffer (Backspace edits it there) and echoes each one back, so the terminal draws what you type. The program, asleep in read(), sees nothing yet.",
       code: [CODE.ptyWrite, CODE.receive, CODE.echo],
       timescale: "us",
+      data: {
+        amount: plural(bytes, "byte"),
+        what: `${quoted(`${typed}\n`)} into the TTY's line buffer, and the same bytes echoed back to the terminal`,
+      },
     },
     shared({ at: line }),
   );
@@ -242,6 +283,10 @@ export function typedSteps<S extends Program>(t: Tracer<S>, typed: string, line:
       body: "The newline ends the line, so the line discipline wakes whoever waits to read it. The scheduler marks the program runnable and soon puts it back on a core, inside read(), where it went to sleep.",
       code: [CODE.receive, CODE.wake],
       timescale: "us",
+      aws: {
+        service: "Amazon SQS long polling",
+        text: "This is how a long-polling SQS consumer feels: ReceiveMessage with WaitTimeSeconds (up to 20 seconds) returns the moment a message arrives, instead of the consumer asking again and again. read() sleeps in the kernel the same way, and the newline is the message arriving.",
+      },
     },
     { ...waking, ...shared<S>({ stage: "running", at: line }) },
   );
@@ -263,6 +308,10 @@ export function typedSteps<S extends Program>(t: Tracer<S>, typed: string, line:
       body: `n_tty_read() copies the line, ${quoted(`${typed}\n`)}, from the TTY's buffer into stdin's buffer on the heap: a copy from kernel memory to the program's, made by the same core in kernel mode. read() returns ${bytes}, and the C library has its line.`,
       code: [CODE.ttyRead, CODE.canonCopy, CODE.read],
       timescale: "us",
+      data: {
+        amount: plural(bytes, "byte"),
+        what: `${quoted(`${typed}\n`)} copied from the kernel's TTY buffer into stdin's buffer at ${stdin}`,
+      },
     },
     shared({ inbuf: `${typed}\n`, at: line }),
     ["stdin"],
@@ -281,6 +330,11 @@ export function promptStep<S extends Program>(t: Tracer<S>, id: string, text: st
       body,
       code: [CODE.printf],
       timescale: "ns",
+      data: { amount: plural(byteLength(text), "byte"), what: "into stdout's buffer, in the program's own memory: no system call yet" },
+      aws: {
+        service: "Amazon Data Firehose",
+        text: "stdout buffers like a Firehose stream: Firehose collects records and delivers them in batches, when its buffer reaches a size or an interval ends. On a terminal, stdout sends its bytes at a newline, or when the program is about to wait for input.",
+      },
     },
     shared({ out: t.state.out + text, at: line }),
     ["stdout"],
@@ -307,6 +361,14 @@ export function printLines<S extends Program>(t: Tracer<S>, id: string, lines: s
       code: [CODE.printf, CODE.write, CODE.ttyWrite],
       timescale: "us",
       ui: { terminalAppend: lines.map((text): TermLine => ({ kind: "output", text })) },
+      data: {
+        amount: plural(lines.reduce((n, l) => n + byteLength(`${l}\n`), 0), "byte"),
+        what: `${plural(lines.length, "line")}, ${plural(lines.length, "write()", "write() calls")}: from stdout's buffer through the TTY to the terminal`,
+      },
+      aws: {
+        service: "Amazon Kinesis Data Streams",
+        text: "Each write() is one trip into the kernel, as each PutRecord is one API request. A line-buffered stdout makes one trip per line, the way calling PutRecord per record costs more round trips than batching with PutRecords.",
+      },
     },
     shared({ out: "", at: line }),
     ["stdout"],
@@ -343,6 +405,7 @@ export function waitSteps<S extends Program>(
       code: [CODE.underflow, CODE.write, CODE.ttyWrite],
       timescale: "us",
       ui: { terminalAppend: [{ kind: "ask", text }] },
+      data: { amount: plural(byteLength(text), "byte"), what: "the prompt, in one write() to the terminal" },
     },
     shared({ out: "", at: line }),
     ["stdout"],
@@ -365,6 +428,11 @@ export function waitSteps<S extends Program>(
       code: [CODE.ttyRead, CODE.schedule],
       timescale: "us",
       ui: { terminalBusy: false },
+      data: { amount: "0 bytes", what: "nothing to read yet, and no CPU used while it waits" },
+      aws: {
+        service: "Amazon SQS long polling",
+        text: "A consumer that calls ReceiveMessage with WaitTimeSeconds set waits on the queue instead of polling it, and pays for one request rather than many. read() goes further: the waiting thread costs no CPU at all until the line arrives.",
+      },
     },
     { ...sleeping, ...shared<S>({ stage, at: line }) },
   );
@@ -385,6 +453,7 @@ export function eofSteps<S extends Program>(t: Tracer<S>, line: number, stdin: s
       body: "The terminal writes one byte, 0x04, into its end of the pseudo-terminal. In canonical mode that byte is VEOF, and the line discipline neither stores it nor echoes it: it ends the line where it is, as Enter does but with no newline, and wakes whoever waits to read. Nothing was typed before it, so the line is empty.",
       code: [CODE.ptyWrite, CODE.canonChar, CODE.lineEnd],
       timescale: "us",
+      data: { amount: "1 byte", what: "0x04, VEOF: it ends the line but is never stored or echoed" },
     },
     shared({ at: line }),
   );
@@ -417,6 +486,11 @@ export function eofSteps<S extends Program>(t: Tracer<S>, line: number, stdin: s
       body: "n_tty_read() finds the end of a line with no bytes before it, so read() returns 0. That is not an error: 0 bytes is how read() says end of file, and for a terminal it lasts only for this read(). fgets() has read nothing at all, so it leaves line[] as it was, sets stdin's end-of-file flag and returns NULL.",
       code: [CODE.ttyRead, CODE.canonCopy, CODE.read],
       timescale: "us",
+      data: { amount: "0 bytes", what: "read() returns 0: the end of the input" },
+      aws: {
+        service: "Amazon Kinesis Data Streams",
+        text: "An empty answer can mean the end: when a shard has been closed and every record read, GetRecords returns no records and no next shard iterator, and the consumer knows that shard is finished. read() returning 0 tells a program the same about its input.",
+      },
     },
     shared({ inbuf: "", at: line }),
     ["stdin"],
@@ -457,6 +531,11 @@ export function interruptSteps<S extends Program>(t: Tracer<S>, o: Interrupted):
       body: `The terminal writes one byte, 0x03, into its end of the pseudo-terminal. ISIG is set, so the line discipline takes it as VINTR, the interrupt character, and never stores it for read(): isig() sends SIGINT to the terminal's foreground process group, which is ${o.name}, throws away whatever was typed but not read yet, and echoes ^C.`,
       code: [CODE.ptyWrite, CODE.specialChar, CODE.isig, CODE.killPgrp],
       timescale: "us",
+      data: { amount: "1 byte", what: "0x03, VINTR: turned into a signal, never stored for read()" },
+      aws: {
+        service: "Amazon ECS",
+        text: "Stopping an ECS task works through signals too: ECS sends SIGTERM to each container's main process, then SIGKILL if it is still running after the stop timeout (30 seconds by default). Ctrl+C sends SIGINT, which a program can also catch, or not.",
+      },
     },
     shared({ at: o.line }),
   );
@@ -479,6 +558,10 @@ export function interruptSteps<S extends Program>(t: Tracer<S>, o: Interrupted):
       body: `${o.name} sets no handler for SIGINT, so the default action applies, and for SIGINT that is to end the process. complete_signal() marks the whole process as exiting and queues SIGKILL for each of its threads.${asleep}${busy}${queued} Each thread meets the signal on its way back to user mode, in get_signal(), and goes no further.`,
       code: [CODE.killPgrp, CODE.completeSignal, CODE.signalWake, ...(o.running.length > 0 ? [CODE.kick] : []), CODE.signalReturn, CODE.getSignal],
       timescale: "us",
+      aws: {
+        service: "Amazon ECS",
+        text: "This is the uncatchable end that ECS's SIGKILL brings after its stop timeout. A program with a handler could clean up first, which is why containers are told to handle SIGTERM; with no handler, the default action ends the process at once.",
+      },
     },
     shared({ stage: "running", at: o.line }),
   );
@@ -496,7 +579,7 @@ export function interruptSteps<S extends Program>(t: Tracer<S>, o: Interrupted):
     ["frame:main"],
   );
   exitMmStep(t, o.name, o.line, " Pages the program never handed back with free() or munmap() come back all the same.");
-  bashStep(t, o.name, "killed by SIGINT", "It prints a new prompt on a new line, after the ^C the terminal echoed.");
+  bashStep(t, o.name, "killed by SIGINT", "It prints a new prompt on a new line, after the ^C the terminal echoed.", 130);
 }
 
 /** "a", "a and b", "a, b and c". */
@@ -515,13 +598,17 @@ function exitMmStep<S extends Program>(t: Tracer<S>, name: string, line: number,
       body: `exit_mm() lets go of the process's memory. ${name} was its only user, so exit_mmap() unmaps every area and frees every page: the heap's, the stacks', the data's.${extra} The kernel never knew about chunks or the C library's lists. It hands out pages and takes them back; the C library does the rest.`,
       code: [CODE.exitMm, CODE.exitMmap],
       timescale: "us",
+      aws: {
+        service: "Amazon EC2 instance store",
+        text: "Like terminating an instance: its memory and its instance store volumes are wiped and handed back whatever the application did or did not clean up. Only what was written somewhere lasting, an EBS volume or S3 here, a file there, survives.",
+      },
     },
     shared({ stage: "exited", at: line }),
   );
 }
 
-/** bash, waiting in wait4() since it started the program, gets its status. */
-function bashStep<S extends Program>(t: Tracer<S>, name: string, status: string, then: string): void {
+/** bash, waiting in wait4() since it started the program, gets its status; $? is what bash shows of it. */
+function bashStep<S extends Program>(t: Tracer<S>, name: string, status: string, then: string, dollar = 0): void {
   t.add({
     id: "bash",
     phase: "output",
@@ -531,6 +618,14 @@ function bashStep<S extends Program>(t: Tracer<S>, name: string, status: string,
     code: [CODE.wait4],
     timescale: "us",
     ui: { terminalBusy: false },
+    data: {
+      amount: "1 byte",
+      what: dollar === 0 ? "the exit status, 0: echo $? in bash prints it" : `of status: a signal number, 2 for SIGINT; bash reports it as 128 + 2, so echo $? prints ${dollar}`,
+    },
+    aws: {
+      service: "Amazon ECS",
+      text: "ECS keeps the same small number for each container that stops: a task's exitCode shows how its container ended, and a code above 128 means a signal ended it, 137 for SIGKILL (128 + 9).",
+    },
   });
 }
 
