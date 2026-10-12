@@ -1,6 +1,6 @@
 "use client";
 
-import { animate, cubicBezier, useMotionValue, type MotionValue } from "motion/react";
+import { animate, useMotionValue, type MotionValue } from "motion/react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { readMs, travelMs, type PlayerAction, type RunStatus, type Speed } from "@/lib/xray/engine";
 import { nodeIndexAt } from "@/lib/xray/geometry";
@@ -14,7 +14,24 @@ import type { Step } from "@/lib/xray/types";
 // reducer for the next step. Stepping while paused still shows the signal
 // travel through the new step, then holds it there.
 
-const TRAVEL_EASE = cubicBezier(0.42, 0, 0.2, 1);
+/** Of each hop's share of the travel time, the part spent moving; the rest it waits at the stop it reached. */
+const MOVING = 0.72;
+
+/**
+ * Where the signal is (0 to 1 along the route) a fraction t into its travel.
+ * Every hop gets the same time, however long it is drawn, eased in and out,
+ * and the signal pauses at each stop, so the numbered stops light one by one.
+ */
+export function travelled(nodeAt: number[], t: number): number {
+  const hops = nodeAt.length - 1;
+  if (hops <= 0) return 1;
+  const clamped = Math.min(1, Math.max(0, t));
+  const hop = Math.min(hops - 1, Math.floor(clamped * hops));
+  const u = Math.min(1, (clamped * hops - hop) / MOVING);
+  const eased = u < 0.5 ? 2 * u * u : 1 - (-2 * u + 2) ** 2 / 2;
+  const from = nodeAt[hop]!;
+  return from + eased * (nodeAt[hop + 1]! - from);
+}
 
 export interface Playhead {
   /** How far through the current step, from 0 to 1. */
@@ -71,7 +88,7 @@ export function usePlayhead({
   // motion it is simply there.
   useEffect(() => {
     const toProgress = (f: number) =>
-      reduced || travel === 0 ? 1 : TRAVEL_EASE(Math.min(1, (f * total) / travel));
+      reduced || travel === 0 || !nodeAt ? 1 : travelled(nodeAt, (f * total) / travel);
     const reachAt = (p: number) => {
       if (!nodeAt) return;
       const i = nodeIndexAt(nodeAt, p);

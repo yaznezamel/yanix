@@ -15,6 +15,8 @@ interface NarrationProps {
   next: Step | null;
   position: { index: number; total: number } | null;
   scenarioTitle: string | null;
+  /** The stop of the step's route the signal has reached, as the map numbers them (from 0). */
+  reached: number;
   selected: NodeId | null;
   onCloseInspector: () => void;
   /** Switch to the hardware view and fly to where a box of the map is in the hardware. */
@@ -81,6 +83,7 @@ export function Narration({
   next,
   position,
   scenarioTitle,
+  reached,
   selected,
   onCloseInspector,
   onShowInHardware,
@@ -150,7 +153,54 @@ export function Narration({
   if (!step || !position) return <Intro />;
 
   return (
-    <StepStory step={step} next={next} position={position} scenarioTitle={scenarioTitle} />
+    <StepStory step={step} next={next} position={position} scenarioTitle={scenarioTitle} reached={reached} />
+  );
+}
+
+/**
+ * The step's route as the map numbers it: one chip per stop, lit in turn as
+ * the signal gets there.
+ */
+function Route({ path, reached }: { path: NodeId[]; reached: number }) {
+  if (path.length < 2) return null;
+  const at = Math.min(reached, path.length - 1);
+  return (
+    <ol aria-label="Route" className="flex flex-wrap items-center gap-x-0.5 gap-y-1 text-[11.5px] leading-none">
+      {path.map((id, i) => {
+        const state = i < at ? "done" : i === at ? "current" : "ahead";
+        return (
+          <li key={`${id}-${i}`} className="flex items-center gap-0.5" aria-current={state === "current" ? "step" : undefined}>
+            {i > 0 && (
+              <span aria-hidden className={state === "ahead" ? "text-lab-muted/60" : "text-signal/70"}>
+                →
+              </span>
+            )}
+            <span
+              className={`flex items-center gap-1 rounded-full py-0.5 pr-1.5 pl-0.5 transition-colors ${
+                state === "current"
+                  ? "bg-signal/15 text-lab-ink ring-1 ring-signal"
+                  : state === "done"
+                    ? "text-lab-ink/80"
+                    : "text-lab-muted"
+              }`}
+            >
+              <span
+                className={`grid size-[18px] place-items-center rounded-full font-mono text-[10.5px] font-bold ${
+                  state === "current"
+                    ? "bg-signal text-[#03141a]"
+                    : state === "done"
+                      ? "bg-[#0c3540] text-signal"
+                      : "border border-white/35 text-lab-ink/75"
+                }`}
+              >
+                {i + 1}
+              </span>
+              {NODES[id].label}
+            </span>
+          </li>
+        );
+      })}
+    </ol>
   );
 }
 
@@ -194,11 +244,13 @@ function StepStory({
   next,
   position,
   scenarioTitle,
+  reached,
 }: {
   step: Step;
   next: Step | null;
   position: { index: number; total: number };
   scenarioTitle: string | null;
+  reached: number;
 }) {
   // The scrolling text is a new element for every step; the cue follows it.
   const { watch, more, scrollDown } = useMoreCue();
@@ -249,6 +301,7 @@ function StepStory({
           <h2 className="text-xl font-semibold leading-tight text-lab-ink [text-wrap:balance]">
             {step.title}
           </h2>
+          <Route path={step.path} reached={reached} />
           {code && (
             <p className="flex min-w-0 items-baseline gap-2 rounded-md border border-lab-line bg-lab-panel2 px-2.5 py-1.5 font-mono text-[12px]">
               <span className="shrink-0 text-lab-muted">

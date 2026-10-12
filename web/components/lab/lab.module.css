@@ -75,6 +75,24 @@
   }
 }
 
+/* The ring around the stop the signal is at: it grows and fades, over and over. */
+.ping {
+  transform-box: fill-box;
+  transform-origin: center;
+  animation: ping 1.4s ease-out infinite;
+}
+
+@keyframes ping {
+  from {
+    transform: scale(1);
+    opacity: 0.9;
+  }
+  to {
+    transform: scale(2.1);
+    opacity: 0;
+  }
+}
+
 .blink {
   animation: blink 1.1s steps(2, start) infinite;
 }
@@ -201,6 +219,7 @@
   .marching,
   .boundaryActive,
   .spin,
+  .ping,
   .blink,
   .eq,
   .sky,

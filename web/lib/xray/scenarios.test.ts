@@ -303,11 +303,16 @@ describe("geometry", () => {
     expect(nodeIndexAt(g.nodeAt, 1)).toBe(4);
   });
 
-  it("enters the system call bar right below its neighbours", () => {
+  it("enters the system call bar straight below the box before it, and leaves it straight above the next", () => {
     const g = buildPath(["glibc", "syscall", "socket"]);
-    const bar = g.points[1]!;
-    expect(bar.y).toBe(NODES.syscall.y + NODES.syscall.h / 2);
-    expect(bar.x).toBeGreaterThan(560);
+    const [entry, exit] = [g.points[1]!, g.points[2]!];
+    expect(entry.y).toBe(NODES.syscall.y + NODES.syscall.h / 2);
+    expect(entry.x).toBe(NODES.glibc.x + NODES.glibc.w / 2);
+    expect(exit.x).toBe(NODES.socket.x + NODES.socket.w / 2);
+    // One number per stop, the bar's where the route meets it.
+    expect(g.badges).toHaveLength(3);
+    expect(g.badges[1]!.x).toBe(entry.x);
+    expect(g.hops).toHaveLength(2);
   });
 
   it("routes DNS referrals around the other name servers", () => {
@@ -318,8 +323,9 @@ describe("geometry", () => {
     const up = buildPath(["usbdrv", "input"]);
     expect(up.points.some((p) => p.x === 516)).toBe(true);
     const out = buildPath(["input", "syscall", "shell"]);
-    expect(out.points.filter((p) => p.x === 516).length).toBe(2);
+    // Two points up the trunk, and the bar entered straight above them.
+    expect(out.points.filter((p) => p.x === 516).length).toBe(3);
     const direct = buildPath(["proc", "syscall", "shell"]);
-    expect(direct.points.length).toBe(3);
+    expect(direct.points.some((p) => p.x === 516 || p.x === 200)).toBe(false);
   });
 });

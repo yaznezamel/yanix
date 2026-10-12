@@ -416,6 +416,7 @@ export function DesktopLab() {
                   next={nextStep}
                   position={run ? { index: run.index, total: steps.length } : null}
                   scenarioTitle={run?.scenario.title ?? null}
+                  reached={reached}
                   selected={selected}
                   onCloseInspector={() => setSelected(null)}
                   onShowInHardware={showInHardware}

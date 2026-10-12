@@ -1,15 +1,20 @@
 "use client";
 
-import { AnimatePresence, motion, type MotionValue } from "motion/react";
+import { AnimatePresence, motion, useTransform, type MotionValue } from "motion/react";
 import { useEffect, useRef, useState } from "react";
-import type { PathGeometry } from "@/lib/xray/geometry";
+import type { Hop, PathGeometry } from "@/lib/xray/geometry";
+import type { Point } from "@/lib/xray/nodes";
 import { BANDS, NODES, NODE_IDS, TOPOLOGY, VIEW, centerOf } from "@/lib/xray/nodes";
 import { packetAt } from "@/lib/xray/packets";
 import type { Layer, MachineNode, NodeId, Packet, Step } from "@/lib/xray/types";
 import styles from "./lab.module.css";
 import { HEADER_COLOR, HEADER_TAG, LAYER_HEX, SIGNAL, alpha } from "./palette";
 
-type NodeState = "idle" | "current" | "path" | "scenario" | "dim";
+/** A box's part in the step: the stop the signal is at, one it has passed, one still ahead, or none. */
+type NodeState = "idle" | "current" | "passed" | "ahead" | "scenario" | "dim";
+
+/** A numbered stop, or a hop between two, relative to the signal. */
+type StopState = "done" | "current" | "ahead";
 
 interface XRayMapProps {
   step: Step | null;
@@ -146,17 +151,20 @@ export function XRayMap({
 
   const crossed = crossings(step);
   const packet = step ? packetAt(step.frames, reached) : null;
-  const current = step ? step.path[Math.min(reached, step.path.length - 1)] : undefined;
+  const at = step ? Math.min(reached, step.path.length - 1) : 0;
+  const current = step ? step.path[at] : undefined;
   const cacheAt = step?.cache ? step.path.indexOf("pagecache") : -1;
   const showCache = cacheAt >= 0 && reached >= cacheAt;
 
   function stateOf(id: NodeId): NodeState {
     if (!step) return "idle";
     if (id === current) return "current";
-    if (step.path.includes(id)) return "path";
+    const first = step.path.indexOf(id);
+    if (first !== -1) return first < at ? "passed" : "ahead";
     if (scenarioNodes?.has(id)) return "scenario";
     return "dim";
   }
+  const stop = (i: number): StopState => (i < at ? "done" : i === at ? "current" : "ahead");
 
   return (
     <svg
@@ -185,6 +193,21 @@ export function XRayMap({
         <pattern id="xray-stripes" width="6" height="6" patternUnits="userSpaceOnUse" patternTransform="rotate(45)">
           <rect width="3" height="6" fill="rgba(5,8,11,0.35)" />
         </pattern>
+        {(["done", "current", "ahead"] as const).map((s) => (
+          <marker
+            key={s}
+            id={`hop-${s}`}
+            viewBox="0 0 10 10"
+            refX={8.6}
+            refY={5}
+            markerWidth={11}
+            markerHeight={11}
+            markerUnits="userSpaceOnUse"
+            orient="auto"
+          >
+            <path d="M 0.5 1 L 9.5 5 L 0.5 9 Z" fill={HOP_INK[s]} />
+          </marker>
+        ))}
       </defs>
 
       {BANDS.map((band) => (
@@ -257,25 +280,12 @@ export function XRayMap({
       ))}
 
       {geometry && (
-        <g>
-          <path
-            ref={routeRef}
-            d={geometry.d}
-            fill="none"
-            stroke={alpha(SIGNAL, 0.35)}
-            strokeWidth={1.6}
-            strokeLinecap="round"
-            className={styles.marching}
-          />
-          <motion.path
-            d={geometry.d}
-            fill="none"
-            stroke={SIGNAL}
-            strokeWidth={3.2}
-            strokeLinecap="round"
-            filter="url(#xray-glow)"
-            style={{ pathLength: progress }}
-          />
+        // The route as numbered stops joined by arrows: done, the one the signal travels now, and those ahead.
+        <g pointerEvents="none" aria-hidden>
+          <path ref={routeRef} d={geometry.d} fill="none" stroke="none" />
+          {geometry.hops.map((hop, i) => (
+            <HopLine key={`${stepKey}-${i}`} hop={hop} state={stop(i)} progress={progress} />
+          ))}
         </g>
       )}
 
@@ -295,10 +305,18 @@ export function XRayMap({
 
       {showCache && step?.cache && <CacheBadge key={`${stepKey}-cache`} kind={step.cache} />}
 
+      {geometry && step && (
+        <g pointerEvents="none" aria-hidden>
+          {geometry.badges.map((point, i) => (
+            <StopBadge key={`${stepKey}-${i}`} n={i + 1} at={point} state={stop(i)} />
+          ))}
+        </g>
+      )}
+
       {geometry && (
         <g ref={markerRef} pointerEvents="none">
-          <circle r={13} fill={alpha(SIGNAL, 0.22)} className={styles.halo} />
-          <circle r={5.5} fill="#ffffff" filter="url(#xray-glow)" />
+          <circle r={9} fill={alpha(SIGNAL, 0.22)} className={styles.halo} />
+          <circle r={4} fill="#ffffff" filter="url(#xray-glow)" />
           <g ref={capsuleRef} data-width={packet ? packet.headers.length * CAPSULE_SEGMENT : 0}>
             <AnimatePresence>{packet && <Capsule key={stepKey} packet={packet} />}</AnimatePresence>
           </g>
@@ -328,7 +346,7 @@ function NodeBox({
   onArrow: (id: NodeId, key: string) => boolean;
 }) {
   const hex = LAYER_HEX[node.layer];
-  const lit = state === "current" || state === "path";
+  const lit = state === "current" || state === "passed";
   const opacity = state === "dim" ? 0.5 : state === "scenario" ? 0.65 : 1;
   const tall = node.h >= 60;
   const labelY = node.bar ? 19 : tall ? 22 : compact ? node.h / 2 + 4 : node.h / 2 - 2;
@@ -374,8 +392,9 @@ function NodeBox({
         height={node.h}
         rx={7}
         fill={lit ? alpha(hex, 0.2) : alpha(hex, 0.07)}
-        stroke={lit ? SIGNAL : alpha(hex, 0.5)}
-        strokeWidth={state === "current" ? 2.4 : lit ? 1.6 : 1}
+        stroke={lit ? SIGNAL : state === "ahead" ? alpha(SIGNAL, 0.55) : alpha(hex, 0.5)}
+        strokeWidth={state === "current" ? 2.4 : lit ? 1.6 : state === "ahead" ? 1.3 : 1}
+        strokeDasharray={state === "ahead" ? "4 3" : undefined}
         filter={state === "current" ? "url(#xray-glow)" : undefined}
       />
       <Decoration node={node} />
@@ -477,6 +496,74 @@ function Decoration({ node }: { node: MachineNode }) {
     default:
       return null;
   }
+}
+
+const HOP_INK: Record<StopState, string> = {
+  done: alpha(SIGNAL, 0.8),
+  current: SIGNAL,
+  ahead: "rgba(255,255,255,0.42)",
+};
+
+/**
+ * One hop of the route. Done: a solid arrow. Ahead: a dashed one, so the
+ * whole route shows before the signal gets there. The hop the signal travels
+ * now draws itself as it goes, from the shared playhead.
+ */
+function HopLine({ hop, state, progress }: { hop: Hop; state: StopState; progress: MotionValue<number> }) {
+  const span = hop.to - hop.from || 1;
+  const drawn = useTransform(progress, (p) => Math.min(1, Math.max(0, (p - hop.from) / span)));
+  if (state === "done") {
+    return <path d={hop.d} fill="none" stroke={HOP_INK.done} strokeWidth={2.2} strokeLinecap="round" markerEnd="url(#hop-done)" />;
+  }
+  return (
+    <g>
+      <path
+        d={hop.d}
+        fill="none"
+        stroke={HOP_INK.ahead}
+        strokeWidth={1.5}
+        strokeDasharray="5 5"
+        strokeLinecap="round"
+        markerEnd={`url(#hop-${state === "current" ? "current" : "ahead"})`}
+      />
+      {state === "current" && (
+        <motion.path
+          d={hop.d}
+          fill="none"
+          stroke={SIGNAL}
+          strokeWidth={3}
+          strokeLinecap="round"
+          filter="url(#xray-glow)"
+          style={{ pathLength: drawn }}
+        />
+      )}
+    </g>
+  );
+}
+
+/** A stop's number: where it comes in the step, lit when the signal is there. */
+function StopBadge({ n, at, state }: { n: number; at: Point; state: StopState }) {
+  const fill = state === "current" ? SIGNAL : state === "done" ? "#0c3540" : "#0b0f14";
+  const ink = state === "current" ? "#03141a" : state === "done" ? SIGNAL : "rgba(255,255,255,0.75)";
+  const ring = state === "ahead" ? "rgba(255,255,255,0.45)" : SIGNAL;
+  return (
+    <g transform={`translate(${at.x} ${at.y})`}>
+      {state === "current" && <circle r={14} fill="none" stroke={SIGNAL} strokeWidth={2} className={styles.ping} />}
+      <motion.circle
+        r={14}
+        fill={fill}
+        stroke={ring}
+        strokeWidth={1.6}
+        initial={false}
+        animate={{ scale: state === "current" ? 1.18 : 1 }}
+        transition={{ duration: 0.25 }}
+        filter={state === "current" ? "url(#xray-glow)" : undefined}
+      />
+      <text y={5} textAnchor="middle" fontSize={14} fontWeight={800} fill={ink} className="font-mono">
+        {n}
+      </text>
+    </g>
+  );
 }
 
 /** The moment the page cache decides: HIT means RAM answers, MISS means a trip to the disk. */

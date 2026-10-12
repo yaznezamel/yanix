@@ -450,10 +450,11 @@ function reduce(state: PlayerState, action: PlayerAction): PlayerState {
   }
 }
 
-// Timing. Travel time grows with the number of hops; reading time with the
-// length of the text, at about 240 words a minute (a careful pace for
-// technical text), so a student can read each step before the next one.
-// Both scale with the chosen speed.
+// Timing. Travel time grows with the number of hops, about two thirds of a
+// second each, so every numbered stop on the map lights in turn; reading time
+// grows with the length of the text, at about 240 words a minute (a careful
+// pace for technical text), so a student can read each step before the next
+// one. Both scale with the chosen speed.
 
 const READ_MS_PER_WORD = 250;
 const READ_BASE_MS = 1200;
@@ -463,7 +464,7 @@ const READ_MAX_MS = 22000;
 export function travelMs(step: Step, speed: Speed): number {
   const hops = step.path.length - 1;
   if (hops <= 0) return 0;
-  return Math.min(3000, 240 + hops * 300) / speed;
+  return Math.min(6000, 200 + hops * 650) / speed;
 }
 
 export function readMs(step: Step, speed: Speed): number {
