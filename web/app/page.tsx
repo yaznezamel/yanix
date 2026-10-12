@@ -1,3 +1,4 @@
+import Link from "next/link";
 import { getHealth } from "@/lib/api/health";
 
 export default async function Home() {
@@ -30,8 +31,24 @@ export default async function Home() {
         )}
       </section>
 
+      <Link
+        href="/desktop"
+        className="group flex items-center justify-between gap-4 rounded-lg border border-cyan-500/40 bg-cyan-500/10 px-4 py-3 transition hover:bg-cyan-500/15"
+      >
+        <span>
+          <span className="block font-semibold">Open the desktop lab</span>
+          <span className="block text-sm text-zinc-600 dark:text-zinc-400">
+            Click apps on a simulated Linux desktop and watch every step from
+            user space to the kernel, the hardware and the network.
+          </span>
+        </span>
+        <span aria-hidden className="text-xl transition group-hover:translate-x-1">
+          →
+        </span>
+      </Link>
+
       <p className="text-sm text-zinc-500">
-        Phase 0 skeleton. The machine view arrives in phase 2.
+        The catalog API and the zoomable map arrive in phases 1 to 3.
       </p>
     </main>
   );

@@ -1,0 +1,130 @@
+// The C program the lab runs: examples/marks/marks.c, line for line (a test
+// checks the two match). Edit the .c file, then copy its lines here.
+
+export const MARKS_C: readonly string[] = [
+  "/*",
+  " * marks.c: a class's marks, kept on the stack and on the heap.",
+  " *",
+  " * Type each student's name and three marks. The program copies each name to",
+  " * the heap, keeps the students in an array on the heap that grows by one each",
+  " * time, then prints everyone's average. It is small on purpose: every",
+  " * variable is there to show where data lives while a program runs.",
+  " *",
+  " *   make && ./marks",
+  " *",
+  " * The Yanix desktop lab traces this program from the keyboard to the kernel",
+  " * and the hardware; README.md shows how to watch it for real with strace,",
+  " * gdb and /proc.",
+  " */",
+  "#define _POSIX_C_SOURCE 200809L /* strdup() is POSIX, not ISO C17 */",
+  "#include <stdio.h>",
+  "#include <stdlib.h>",
+  "#include <string.h>",
+  "",
+  "#define SUBJECTS 3",
+  "",
+  "struct student {",
+  "\tchar *name;          /* points to a copy of the name, on the heap */",
+  "\tint marks[SUBJECTS]; /* the marks themselves, inside the struct */",
+  "};",
+  "",
+  "/*",
+  " * Reads a line of marks into line[] and parses it into marks[]: 1 if there",
+  " * are three whole numbers from 0 to 100, 0 if not, -1 at the end of input.",
+  " * Both arrays belong to main(): this function only gets pointers to them.",
+  " */",
+  "static int read_marks(char line[], int size, int marks[])",
+  "{",
+  "\tif (!fgets(line, size, stdin))",
+  "\t\treturn -1;",
+  "\tif (sscanf(line, \"%d %d %d\", &marks[0], &marks[1], &marks[2]) != SUBJECTS)",
+  "\t\treturn 0;",
+  "\tfor (int i = 0; i < SUBJECTS; i++)",
+  "\t\tif (marks[i] < 0 || marks[i] > 100)",
+  "\t\t\treturn 0;",
+  "\treturn 1;",
+  "}",
+  "",
+  "/* Gets a stack frame of its own for its locals, below main()'s. */",
+  "static double average(const int marks[], int n)",
+  "{",
+  "\tint sum = 0;",
+  "",
+  "\tfor (int i = 0; i < n; i++)",
+  "\t\tsum += marks[i];",
+  "\treturn (double)sum / n;",
+  "}",
+  "",
+  "int main(void)",
+  "{",
+  "\tchar line[64];                     /* stack: the line you just typed */",
+  "\tstruct student s;                  /* stack: the student being typed in */",
+  "\tstruct student *students = NULL;   /* stack: points to the array on the heap */",
+  "\tsize_t count = 0;                  /* stack: how many students so far */",
+  "",
+  "\tfor (;;) {",
+  "\t\tprintf(\"Student name: \");",
+  "\t\tif (!fgets(line, sizeof line, stdin))",
+  "\t\t\tbreak;",
+  "\t\tline[strcspn(line, \"\\n\")] = '\\0';",
+  "\t\ts.name = strdup(line);     /* heap: a copy of the name, just big enough */",
+  "\t\tif (!s.name)",
+  "\t\t\tbreak;",
+  "",
+  "\t\tprintf(\"Marks for %s (3 numbers, 0 to 100): \", s.name);",
+  "\t\tint got;",
+  "\t\twhile ((got = read_marks(line, sizeof line, s.marks)) == 0)",
+  "\t\t\tprintf(\"Please type 3 whole numbers from 0 to 100: \");",
+  "\t\tif (got < 0) {",
+  "\t\t\tfree(s.name);",
+  "\t\t\tbreak;",
+  "\t\t}",
+  "",
+  "\t\t/* heap: the array grows by one student, and may move to do so */",
+  "\t\tstruct student *grown = realloc(students, (count + 1) * sizeof *students);",
+  "\t\tif (!grown) {",
+  "\t\t\tfree(s.name);",
+  "\t\t\tbreak;",
+  "\t\t}",
+  "\t\tstudents = grown;",
+  "\t\tstudents[count++] = s;     /* copies the name pointer and the marks */",
+  "",
+  "\t\tprintf(\"Add another student? (y/n) \");",
+  "\t\tif (!fgets(line, sizeof line, stdin) || (line[0] != 'y' && line[0] != 'Y'))",
+  "\t\t\tbreak;",
+  "\t}",
+  "",
+  "\tfor (size_t i = 0; i < count; i++)",
+  "\t\tprintf(\"%-12s %3d %3d %3d   average %5.1f\\n\", students[i].name,",
+  "\t\t       students[i].marks[0], students[i].marks[1], students[i].marks[2],",
+  "\t\t       average(students[i].marks, SUBJECTS));",
+  "",
+  "\tfor (size_t i = 0; i < count; i++)",
+  "\t\tfree(students[i].name);",
+  "\tfree(students);",
+  "\treturn 0;",
+  "}",
+];
+
+/** The number (from 1) of the first of `lines` after line `after` that contains the text. */
+export function findLine(lines: readonly string[], text: string, after = 0): number {
+  const index = lines.findIndex((line, i) => i >= after && line.includes(text));
+  if (index < 0) throw new Error(`no line with ${JSON.stringify(text)}`);
+  return index + 1;
+}
+
+/** Line `at` of `lines` (from 1) without its indentation and comment, or null before main(). */
+export function codeAt(lines: readonly string[], at: number): string | null {
+  const text = lines[at - 1];
+  return at > 0 && text !== undefined ? text.replace(/\s*\/\*.*\*\/\s*$/, "").trim() : null;
+}
+
+/** The number (from 1) of the first line of marks.c after line `after` that contains the text. */
+export function lineOf(text: string, after = 0): number {
+  return findLine(MARKS_C, text, after);
+}
+
+/** Line `at` of marks.c (from 1) without its indentation and comment, or null before main(). */
+export function sourceLine(at: number): string | null {
+  return codeAt(MARKS_C, at);
+}

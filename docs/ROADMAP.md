@@ -18,17 +18,115 @@ Each task is one learning step and roughly one commit. Work them in order.
 
 ---
 
-## Phase 0. Foundations (done, except 0.6)
+## Phase 0. Foundations (done)
 
 - [x] **0.1 Repository foundation.** Licences, ignore files, plan, ADR template.
 - [x] **0.2 FastAPI skeleton.** `GET /api/v1/health`, tests, ruff, strict pyright.
 - [x] **0.3 Next.js skeleton.** Server component calls the health endpoint.
 - [x] **0.4 Docker.** Dockerfiles for both, `docker-compose.yml`.
 - [x] **0.5 CI.** API, web and compose jobs in `.github/workflows/ci.yml`.
-- [ ] **0.6 Prove it on GitHub.** Open a pull request from the phase 0 branch,
+- [x] **0.6 Prove it on GitHub.** Open a pull request from the phase 0 branch,
   get all three CI jobs green, merge to `main`. Turn on branch protection
   (CI green + one review).
   *Done when:* `main` contains phase 0 and CI is green on it.
+
+## Built ahead: desktop lab (done, see ADR 0002 and 0003)
+
+A simulated desktop at `/desktop`: use the computer and watch each step go
+through user space, the kernel, the hardware and the network. Traced: starting
+and shutting down (firmware, bootloader, kernel, systemd, DHCP, logind, ACPI),
+logging in, launching an app (clone, copy-on-write, execve, the ELF loader,
+ld.so, page faults), opening a file (the page cache hit or miss, NVMe, DMA),
+typing (USB, HID, evdev, the compositor, Wayland), a web search, playing sound
+and video (PipeWire, real-time scheduling, HD Audio), and copy and paste. It
+was built in one go at my request, ahead of the phases it borrows from (ADR
+0002), on one reference stack (ADR 0003). The engine and scenarios are in
+`web/lib/xray/`, the machine view in `web/components/lab/` and the desktop in
+`web/components/desktop/`.
+
+Later, also at my request: `./marks`, a real C program
+(`examples/marks/marks.c`) that runs in the lab's terminal, with a Memory tab
+for its stack and heap. Its memory is modelled from strace and gdb
+measurements of the real program (ADR 0006). Then `./cores`
+(`examples/cores/cores.c`), which adds up a million marks with up to four
+threads on four cores: stacks, `clone3()`, futexes and the hardware view's
+cores working at once, with a simple scheduler model (ADR 0007).
+
+Tasks to make it mine, any time after phase 1 starts:
+
+- [ ] **L.1 Read the engine.** Walk through `engine.ts` and its tests, and
+  explain how stepping back also rewinds the screen, and why a field a trace
+  will change is locked until the trace ends. Add one test of your own.
+  *Concepts:* reducers, pure functions, derived state.
+  *Docs:* React "Extracting State Logic into a Reducer"; Vitest "Getting
+  Started".
+  *Done when:* you can explain `appsAt` and `machineAt` and your test passes.
+- [ ] **L.2 A `curl http://example.com` scenario.** Plain HTTP from the
+  terminal: no TLS, so the packet panel shows the request in the clear.
+  *Concepts:* union types (a new `ScenarioRequest` kind), narrowing.
+  *Done when:* the command plays in the terminal and the scenario tests pass.
+- [ ] **L.3 A `ping` scenario.** ICMP echo through the same path. Check first
+  how ping opens an ICMP socket without root (`ping_group_range` in
+  `man 7 icmp`).
+  *Done when:* the packet panel shows an IPv4 header with an ICMP payload.
+- [ ] **L.4 Scenarios from YAML (FR12).** After task 1.5, move the lab's
+  scenarios and node descriptions into `content/` and load them through the
+  API.
+  *Done when:* changing a step's text needs no TypeScript change.
+- [ ] **L.5 Light theme (NFR4).** Together with task 6.1.
+- [ ] **L.6 Read the camera.** Walk through `web/lib/hardware/camera.ts` and
+  its tests: world and screen coordinates, zooming around the pointer, and why
+  one SVG transform per frame keeps zooming smooth without re-rendering React.
+  Add a test of your own (for example, that a drag never moves the camera
+  outside the computer).
+  *Concepts:* coordinate transforms, pure functions, refs versus state.
+  *Docs:* MDN "transform" (SVG attribute); React "Referencing Values with Refs".
+  *Done when:* you can derive `zoomAround`'s formula on paper and your test
+  passes.
+- [ ] **L.7 Read the malloc model.** Build and run `examples/marks/` with
+  strace and gdb (its README says how), then walk through
+  `web/lib/xray/marks/heap.ts` and its tests: chunk sizes, the tcache, the top
+  chunk, why the first malloc() calls brk() and why realloc() moves the array
+  only sometimes. Predict the heap after four students, then check with gdb.
+  *Concepts:* the heap, chunk headers, free lists, immutable updates in
+  TypeScript.
+  *Docs:* `man 3 malloc`, `man 3 mallopt`; the glibc wiki's "MallocInternals".
+  *Done when:* your prediction matches gdb and you add it as a test.
+- [ ] **L.8 Threads for real.** Run `examples/cores/` under `strace -f` and
+  `taskset -c 0` (its README says how), then read `web/lib/xray/cores/program.ts`:
+  where the lab's scheduler model differs from what you saw, and why the
+  program's speed-up with 4 threads is less than 4.
+  *Concepts:* threads versus processes, `clone3()` flags, futexes, run queues.
+  *Docs:* `man 7 pthreads`, `man 2 clone3`, `man 2 futex`; the kernel's
+  "CFS Scheduler" and "EEVDF Scheduler" documents.
+  *Done when:* you can explain one difference between the model and a real run,
+  and add a test for a case of your choice to `cores.test.ts`.
+
+### Hardware view (in progress, see ADR 0004)
+
+A Hardware tab next to the lab's software map. You zoom from the whole
+computer into the CPU, a core and, later, the data path; the parts and wires
+the current step uses light up, in step with the timeline. It is built in five
+phases, each one reviewed before the next:
+
+- [x] **H.1 Model and camera.** The hierarchy as data (`web/lib/hardware/`),
+  zoom, pan, click to fly in, keyboard, level of detail, breadcrumb, one
+  playhead shared by every view, and a timeline you can drag. Plain boxes.
+- [x] **H.2 Machine and CPU drawings.** The motherboard and CPU package drawn
+  as hardware, with hover cards. Also: "Show in Hardware" from a box's
+  details, and the frame-rate work in
+  [ADR 0005](adr/0005-draw-the-hardware-in-code-and-keep-zooming-cheap.md).
+- [ ] **H.3 Core and data path.** The core's units and the data path below
+  them, with each step's events animated at every level. Started: a step can
+  name the units it uses (`Step.parts`) and the cores it runs on
+  (`Step.cores`); `./marks` and `./cores` do (ADR 0006, ADR 0007).
+- [ ] **H.4 RAM, SSD and network controller.** DIMM chips and banks, the
+  SSD's controller and flash, the NIC's DMA rings.
+- [ ] **H.5 Timeline sync and polish.** Following the signal across levels,
+  touch, and a 60 fps check on a mid-range laptop.
+
+Tasks 2.3, 3.4 and 3.5 below assumed React Flow for the zoomable map; re-plan
+them against this view before phase 2 starts (ADR 0004).
 
 ## Phase 1. Content and catalog API (backend, familiar ground)
 
@@ -64,8 +162,8 @@ Each task is one learning step and roughly one commit. Work them in order.
 - [ ] **1.6 Write the MVP content.** Port every part from
   `docs/prototype/index.html` into YAML: components, levels (with hand placed
   coordinates for hardware levels), and the two scenarios.
-  Decide and record: which kernel release to pin (ADR 0002) and which
-  filesystem the trace uses.
+  Decide and record in an ADR: which kernel release to pin and which
+  filesystem the trace uses. Then pin the kernel paths in the desktop lab too.
   *Done when:* the real content loads, and every figure is sourced or labelled.
 - [ ] **1.7 Content in CI and for contributors (FR12).** A `validate` command
   that CI runs on `content/`; a first draft of CONTRIBUTING.md's content track.
@@ -96,7 +194,8 @@ Each task is one learning step and roughly one commit. Work them in order.
   *Concepts:* component composition, props with defaults, SVG in JSX.
   *Done when:* the System level looks like the prototype's motherboard.
 - [ ] **2.5 Layers visible (FR13).** Software strip for user and kernel, layer
-  colours as design tokens in Tailwind's theme.
+  colours as design tokens in Tailwind's theme (the desktop lab already
+  defines them in `app/globals.css`; reuse them).
   *Done when:* user, kernel and hardware are distinct at a glance.
 - [ ] **2.6 Accessibility baseline (NFR3).** Nodes are focusable with labels;
   Enter selects; visible focus ring.
@@ -131,10 +230,12 @@ Each task is one learning step and roughly one commit. Work them in order.
 ## Phase 4. Trace playback
 
 - [ ] **4.0 Decide where traces run.** Server-computed traces vs steps sent
-  once and animated on the client (open decision). Write ADR 0003.
+  once and animated on the client (open decision; the desktop lab animates on
+  the client, see ADR 0002). Record it in an ADR.
 - [ ] **4.1 Scenario pages (FR6).** `/scenarios` list and `/scenarios/[id]`.
 - [ ] **4.2 `usePlayback` hook.** Play, pause, step forward and back, reset;
-  timers cleaned up in effects; unit tests with Vitest.
+  timers cleaned up in effects; unit tests with Vitest (already set up; the
+  desktop lab's `web/lib/xray/engine.ts` is a reference reducer).
   *Docs:* React "Reusing Logic with Custom Hooks", "Synchronizing with Effects".
   *Done when:* the hook's tests cover every control.
 - [ ] **4.3 Highlight and signal (FR7).** Active part glows, the active path

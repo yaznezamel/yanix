@@ -23,14 +23,28 @@ Track the current phase and task here so each session knows where to resume.
 The task-by-task plan is [`docs/ROADMAP.md`](docs/ROADMAP.md); tick tasks there
 as they finish.
 
-- Current phase: **0. Foundations**, built by the assistant at my request;
-  done once CI is green on GitHub (the compose job proves `docker compose up`).
-- Done: 0.1 repository foundation; scope extended to the Linux kernel (ADR
-  0001); renamed to Yanix; realistic PC prototype in `docs/prototype/`;
-  0.2 FastAPI skeleton (`/api/v1/health`, tests, ruff, strict pyright);
-  0.3 Next.js skeleton calling the API from a server component;
-  0.4 Dockerfiles and `docker-compose.yml`; 0.5 GitHub Actions CI.
-- Next: 0.6 (pull request, green CI, merge), then phase 1, task 1.1. From
+- Current phase: **1. Content and catalog API**.
+- Done: phase 0 (foundations), built by the assistant at my request and green
+  in CI on `main`, including the `docker compose up` job. Also: scope extended
+  to the Linux kernel (ADR 0001), renamed to Yanix, realistic PC prototype in
+  `docs/prototype/`.
+- Also done, ahead of the roadmap: the desktop lab at `/desktop` (ADR 0002),
+  built by the assistant at my request, then extended with boot, shutdown,
+  launch, file, keyboard, media and clipboard traces on one reference stack
+  (ADR 0003; code references checked against Linux v7.2). Its study tasks
+  (L.1 to L.6) are in the roadmap.
+- Also done, ahead of the roadmap: `./marks`, a real C program
+  (`examples/marks/`) the lab runs in its terminal, with a Memory tab showing
+  its stack and heap, modelled from strace and gdb measurements (ADR 0006).
+  Then `./cores` (`examples/cores/`), threads on all four cores with a simple
+  scheduler model (ADR 0007). Both built by the assistant at my request; study
+  tasks L.7 and L.8 in the roadmap.
+- In progress, ahead of the roadmap: a zoomable hardware view in the lab
+  (ADR 0004, ADR 0005), in five phases (H.1 to H.5 in the roadmap), each
+  built by the assistant at my request and reviewed by me before the next.
+  H.1 and H.2 are built; H.3 (core and data path) is next.
+- Still to do by hand: branch protection on `main` (CI green + one review).
+- Next: phase 1, task 1.1, Pydantic models for the component YAML. From
   phase 1 on, I write the code and the assistant teaches and reviews.
 
 ## Who I am
@@ -68,3 +82,15 @@ as they finish.
   React Flow APIs change often.
 - Write a short ADR in `docs/adr/` for any decision that took more than ten
   minutes.
+
+## Commits and pull requests
+
+- Never mention Claude, Claude Code, Anthropic or AI assistance in commit
+  messages, pull request titles or bodies, code comments, or any other text
+  pushed to the repository.
+- No `Co-Authored-By` trailers, no "Generated with" lines, no session links.
+  (`.claude/settings.json` also turns Claude Code's attribution off.)
+- Commits are authored as me, with my git identity. Never set a Claude or
+  Anthropic author or committer.
+- Pull request bodies follow `.github/pull_request_template.md`: fill in every
+  section, tick the boxes that apply, and write "N/A" where a section does not.

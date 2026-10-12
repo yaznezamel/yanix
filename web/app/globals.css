@@ -5,6 +5,20 @@
   --foreground: #171717;
 }
 
+@theme {
+  --color-signal: #3fe0ff;
+  --color-layer-user: #ff7ab6;
+  --color-layer-kernel: #8fa3ff;
+  --color-layer-hardware: #ffb35c;
+  --color-layer-network: #5eead4;
+  --color-lab-bg: #07090c;
+  --color-lab-panel: #0e1217;
+  --color-lab-panel2: #141920;
+  --color-lab-line: #222932;
+  --color-lab-ink: #e8edf2;
+  --color-lab-muted: #8b96a3;
+}
+
 @theme inline {
   --color-background: var(--background);
   --color-foreground: var(--foreground);
