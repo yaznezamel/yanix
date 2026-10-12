@@ -32,6 +32,11 @@ through the kernel and the hardware:
   heap, `realloc()` moving the array, the first `brk()` and page fault. The
   program is [`examples/marks/marks.c`](examples/marks/), which you can build
   and watch for real with strace and gdb.
+- **Use every core:** type `./cores` and a number of threads (1 to 4). Each
+  thread gets a stack of its own and a `clone3()`, the scheduler places it on
+  a core, and the Hardware tab lights all four cores at once while they add up
+  a shared array; `main()` sleeps in `pthread_join()` until each one exits.
+  The program is [`examples/cores/cores.c`](examples/cores/).
 
 Pause, step, replay, or drag the timeline to any point. Switch between an
 overview and a deep dive. Caches stay warm between runs, so a second read,
@@ -48,10 +53,12 @@ a generic, illustrative PC
 
 It is a teaching model with scripted steps, not a live trace (see
 [ADR 0002](docs/adr/0002-build-a-desktop-lab-ahead-of-the-roadmap.md) and
-[ADR 0003](docs/adr/0003-model-one-desktop-linux-stack.md)). The C program's
-memory is modelled from measurements of the real program, and tests check the
+[ADR 0003](docs/adr/0003-model-one-desktop-linux-stack.md)). The C programs'
+memory is modelled from measurements of the real programs, and tests check the
 model against them
-([ADR 0006](docs/adr/0006-model-a-real-c-program-from-measurements.md)).
+([ADR 0006](docs/adr/0006-model-a-real-c-program-from-measurements.md)); which
+core runs which thread is the lab's simple model of the scheduler
+([ADR 0007](docs/adr/0007-model-threads-on-cores-and-say-what-is-modelled.md)).
 
 ## What it will be
 

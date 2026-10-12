@@ -36,7 +36,9 @@ as they finish.
 - Also done, ahead of the roadmap: `./marks`, a real C program
   (`examples/marks/`) the lab runs in its terminal, with a Memory tab showing
   its stack and heap, modelled from strace and gdb measurements (ADR 0006).
-  Built by the assistant at my request; study task L.7 in the roadmap.
+  Then `./cores` (`examples/cores/`), threads on all four cores with a simple
+  scheduler model (ADR 0007). Both built by the assistant at my request; study
+  tasks L.7 and L.8 in the roadmap.
 - In progress, ahead of the roadmap: a zoomable hardware view in the lab
   (ADR 0004, ADR 0005), in five phases (H.1 to H.5 in the roadmap), each
   built by the assistant at my request and reviewed by me before the next.

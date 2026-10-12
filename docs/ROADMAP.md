@@ -47,7 +47,10 @@ was built in one go at my request, ahead of the phases it borrows from (ADR
 Later, also at my request: `./marks`, a real C program
 (`examples/marks/marks.c`) that runs in the lab's terminal, with a Memory tab
 for its stack and heap. Its memory is modelled from strace and gdb
-measurements of the real program (ADR 0006).
+measurements of the real program (ADR 0006). Then `./cores`
+(`examples/cores/cores.c`), which adds up a million marks with up to four
+threads on four cores: stacks, `clone3()`, futexes and the hardware view's
+cores working at once, with a simple scheduler model (ADR 0007).
 
 Tasks to make it mine, any time after phase 1 starts:
 
@@ -89,6 +92,15 @@ Tasks to make it mine, any time after phase 1 starts:
   TypeScript.
   *Docs:* `man 3 malloc`, `man 3 mallopt`; the glibc wiki's "MallocInternals".
   *Done when:* your prediction matches gdb and you add it as a test.
+- [ ] **L.8 Threads for real.** Run `examples/cores/` under `strace -f` and
+  `taskset -c 0` (its README says how), then read `web/lib/xray/cores/program.ts`:
+  where the lab's scheduler model differs from what you saw, and why the
+  program's speed-up with 4 threads is less than 4.
+  *Concepts:* threads versus processes, `clone3()` flags, futexes, run queues.
+  *Docs:* `man 7 pthreads`, `man 2 clone3`, `man 2 futex`; the kernel's
+  "CFS Scheduler" and "EEVDF Scheduler" documents.
+  *Done when:* you can explain one difference between the model and a real run,
+  and add a test for a case of your choice to `cores.test.ts`.
 
 ### Hardware view (in progress, see ADR 0004)
 
@@ -106,7 +118,8 @@ phases, each one reviewed before the next:
   [ADR 0005](adr/0005-draw-the-hardware-in-code-and-keep-zooming-cheap.md).
 - [ ] **H.3 Core and data path.** The core's units and the data path below
   them, with each step's events animated at every level. Started: a step can
-  name the units it uses (`Step.parts`), and `./marks` does (ADR 0006).
+  name the units it uses (`Step.parts`) and the cores it runs on
+  (`Step.cores`); `./marks` and `./cores` do (ADR 0006, ADR 0007).
 - [ ] **H.4 RAM, SSD and network controller.** DIMM chips and banks, the
   SSD's controller and flash, the NIC's DMA rings.
 - [ ] **H.5 Timeline sync and polish.** Following the signal across levels,
