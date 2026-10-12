@@ -1,4 +1,4 @@
-import type { Header, Packet, PacketFrame } from "./types";
+import type { Header, Packet, PacketFrame, Step, StepData } from "./types";
 
 // Addresses come from the ranges reserved for documentation (RFC 5737 for
 // IPv4, RFC 7042 for MAC addresses), so nothing here points at a real host.
@@ -211,6 +211,71 @@ export function framesAround(
     if (f.at <= index) i = k;
   });
   return { current: frames[i]?.packet ?? null, previous: i > 0 ? (frames[i - 1]?.packet ?? null) : null };
+}
+
+/** Ethernet's shortest frame before its checksum: a shorter one is padded to it (IEEE 802.3). */
+const ETH_MIN = 60;
+/** The checksum (FCS) at the end of every Ethernet frame. */
+const FCS = 4;
+
+/** How many bytes an Ethernet frame takes on the wire: padded to the minimum, and its checksum. */
+export function onWire(frameBytes: number): number {
+  return Math.max(frameBytes, ETH_MIN) + FCS;
+}
+
+/** Thousands separated, as everywhere else: 1,696 bytes. */
+const grouped = (amount: string) => amount.replace(/\d{4,}/g, (d) => Number(d).toLocaleString("en-US"));
+
+const NETWORK: ReadonlySet<Header["kind"]> = new Set(["eth", "ip", "udp", "tcp", "dns", "arp", "dhcp", "tls", "http"]);
+
+/** A header with nothing inside it is named as one: "the TCP header", not "the TCP". */
+const HEADER_ONLY: Partial<Record<Header["kind"], string>> = { ip: "IPv4 header", udp: "UDP header", tcp: "TCP header" };
+
+/** "a, b and c" */
+function list(items: string[]): string {
+  return items.length <= 1 ? (items[0] ?? "") : `${items.slice(0, -1).join(", ")} and ${items.at(-1)}`;
+}
+
+/**
+ * What a step moves: its own figure, or the biggest packet, report or
+ * command of known size it carries (on the way down, the frame on the wire;
+ * on the way up, the one that arrived), with what the bytes are.
+ */
+export function dataOf(step: Step): StepData | null {
+  if (step.data) return { ...step.data, amount: grouped(step.data.amount) };
+  let packet: Packet | null = null;
+  let bytes = -1;
+  for (const f of step.frames ?? []) {
+    const b = packetBytes(f.packet);
+    if (b !== null && b > bytes) {
+      packet = f.packet;
+      bytes = b;
+    }
+  }
+  if (!packet) return null;
+  const headers = packet.headers;
+  const outer = headers[0]!;
+  if (!NETWORK.has(outer.kind) || headers.length === 1) {
+    // A report, events or a message: several of one size are counted as such.
+    const size = headers[0]!.bytes;
+    const same = headers.length > 1 && headers.every((h) => h.bytes === size);
+    return { amount: grouped(same ? `${headers.length} × ${size} bytes` : `${bytes} bytes`), what: packet.caption };
+  }
+  // A packet: what it carries, and the headers around it, innermost first.
+  const inner = headers.at(-1)!;
+  const wrappers = headers.slice(0, -1).reverse();
+  const around =
+    wrappers.length === 1
+      ? `in a ${wrappers[0]!.bytes}-byte ${wrappers[0]!.title} header`
+      : `in ${list(wrappers.map((h) => `${h.title} (${h.bytes})`))} headers`;
+  const core = `the ${HEADER_ONLY[inner.kind] ?? inner.title} (${inner.bytes} bytes) ${around}`;
+  if (outer.kind !== "eth") return { amount: grouped(`${bytes} bytes`), what: core };
+  const pad = Math.max(0, ETH_MIN - bytes);
+  const padding = pad > 0 ? `, ${pad} bytes of padding up to Ethernet's shortest frame` : "";
+  return {
+    amount: grouped(`${onWire(bytes)} bytes`),
+    what: `on the wire: ${core}${padding}, and a ${FCS}-byte checksum`,
+  };
 }
 
 export function packetBytes(packet: Packet): number | null {

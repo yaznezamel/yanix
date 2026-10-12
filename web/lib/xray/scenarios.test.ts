@@ -3,9 +3,9 @@ import { APPS, COLD_MACHINE, INITIAL_APPS, MEDIA, NOTES_FILE } from "./apps";
 import { visibleSteps } from "./engine";
 import { buildPath, nodeIndexAt } from "./geometry";
 import { BANDS, NODES, NODE_IDS, VIEW } from "./nodes";
-import { packetAt, packetBytes } from "./packets";
+import { dataOf, packetAt, packetBytes } from "./packets";
 import { buildScenario } from "./scenarios";
-import { hidReport, inputEvent, keyInfo, nvmeRead, waylandKey } from "./structs";
+import { hidReport, inputEvent, keyInfo, mscScan, nvmeRead, waylandKey } from "./structs";
 import type { MachineState, Scenario, ScenarioRequest } from "./types";
 
 const WARM: MachineState = {
@@ -79,6 +79,20 @@ describe.each(variants)("$name", ({ scenario }) => {
     }
   });
 
+  it("gives data amounts and short AWS notes that name a service", () => {
+    for (const s of scenario.steps) {
+      const data = dataOf(s);
+      if (data) {
+        expect(data.amount).toMatch(/\d/);
+        expect(data.what.length).toBeGreaterThan(10);
+      }
+      if (s.aws) {
+        expect(s.aws.service.length).toBeGreaterThan(2);
+        expect(s.aws.text.split(/\s+/).length).toBeLessThanOrEqual(60);
+      }
+    }
+  });
+
   it("plays in both detail levels", () => {
     expect(visibleSteps(scenario, "overview").length).toBeGreaterThan(2);
     expect(visibleSteps(scenario, "deep").length).toBeGreaterThanOrEqual(
@@ -105,10 +119,25 @@ describe("web search", () => {
     expect(packetBytes(packet)).toBe(75);
   });
 
+  it("pads a short frame to Ethernet's minimum on the wire", () => {
+    const request = dataOf(step(cold, "arp-request"))!;
+    expect(request.amount).toBe("64 bytes");
+    expect(request.what).toContain("18 bytes of padding");
+  });
+
   it("shows the NAT rewrite once the SYN has left the router", () => {
     const nat = step(cold, "tcp-nat");
     expect(packetAt(nat.frames, 1)!.headers.find((h) => h.kind === "ip")?.fields[0]?.value).toBe("192.168.1.23");
     expect(packetAt(nat.frames, 2)!.headers.find((h) => h.kind === "ip")?.fields[0]?.value).toBe("198.51.100.7");
+  });
+
+  it("says how many bytes the handshakes move", () => {
+    expect(dataOf(step(cold, "tcp-syn"))?.amount).toBe("78 bytes");
+    expect(dataOf(step(cold, "tcp-syn"))?.what).toBe(
+      "on the wire: the TCP header (40 bytes) in IPv4 (20) and Ethernet (14) headers, and a 4-byte checksum",
+    );
+    expect(dataOf(step(cold, "tls-hello"))?.amount).toBe("1,541 bytes");
+    expect(dataOf(step(cold, "dns-syscall"))?.amount).toBe("2 × 33 bytes");
   });
 
   it("encrypts the request between the network service and the kernel", () => {
@@ -192,6 +221,18 @@ describe("a keystroke", () => {
     expect(hidReport("H").fields[0]?.value).toContain("Shift");
   });
 
+  it("reports the scan code before the key, as hid-input does", () => {
+    expect(mscScan("h").fields.at(-1)?.value).toContain("0x7000b");
+    const s = buildScenario({ kind: "keystroke", app: "editor", key: "h" }, COLD_MACHINE, INITIAL_APPS);
+    const queued = packetAt(step(s, "evdev").frames, 1)!;
+    expect(queued.headers.map((h) => h.title)).toEqual([
+      "struct input_event (scan code)",
+      "struct input_event",
+      "struct input_event (sync)",
+    ]);
+    expect(dataOf(step(s, "evdev"))?.amount).toBe("3 × 24 bytes");
+  });
+
   it("goes from the keyboard through the kernel and the compositor to the app", () => {
     const s = buildScenario({ kind: "keystroke", app: "browser", key: "h" }, COLD_MACHINE, INITIAL_APPS);
     const visited = s.steps.flatMap((x) => x.path);
@@ -207,6 +248,12 @@ describe("copy and paste", () => {
     const s = buildScenario({ kind: "copy", app: "editor", text: "x" }, COLD_MACHINE, INITIAL_APPS);
     expect(s.steps.some((x) => x.frames?.some((f) => f.packet.headers.some((h) => h.kind === "pipe")))).toBe(false);
     expect(step(s, "owner").ui?.clipboard).toEqual({ owner: "editor", text: "x" });
+  });
+
+  it("sizes the Wayland messages as they go over the socket", () => {
+    const s = buildScenario({ kind: "copy", app: "editor", text: "x" }, COLD_MACHINE, INITIAL_APPS);
+    expect(dataOf(step(s, "data-source"))?.amount).toBe("40 bytes");
+    expect(dataOf(step(s, "set-selection"))?.amount).toBe("16 bytes");
   });
 
   it("paste pipes the text from the owner to the target", () => {
@@ -303,23 +350,20 @@ describe("geometry", () => {
     expect(nodeIndexAt(g.nodeAt, 1)).toBe(4);
   });
 
-  it("enters the system call bar right below its neighbours", () => {
+  it("enters the system call bar straight below the box before it, and leaves it straight above the next", () => {
     const g = buildPath(["glibc", "syscall", "socket"]);
-    const bar = g.points[1]!;
-    expect(bar.y).toBe(NODES.syscall.y + NODES.syscall.h / 2);
-    expect(bar.x).toBeGreaterThan(560);
+    const [entry, exit] = [g.points[1]!, g.points[2]!];
+    expect(entry.y).toBe(NODES.syscall.y + NODES.syscall.h / 2);
+    expect(entry.x).toBe(NODES.glibc.x + NODES.glibc.w / 2);
+    expect(exit.x).toBe(NODES.socket.x + NODES.socket.w / 2);
+    // One number per stop, the bar's where the route meets it.
+    expect(g.badges).toHaveLength(3);
+    expect(g.badges[1]!.x).toBe(entry.x);
+    expect(g.hops).toHaveLength(2);
   });
 
   it("routes DNS referrals around the other name servers", () => {
     expect(buildPath(["resolver", "tld", "resolver"]).points.length).toBeGreaterThan(3);
   });
 
-  it("runs up the side of the kernel's middle column instead of through its boxes", () => {
-    const up = buildPath(["usbdrv", "input"]);
-    expect(up.points.some((p) => p.x === 516)).toBe(true);
-    const out = buildPath(["input", "syscall", "shell"]);
-    expect(out.points.filter((p) => p.x === 516).length).toBe(2);
-    const direct = buildPath(["proc", "syscall", "shell"]);
-    expect(direct.points.length).toBe(3);
-  });
 });

@@ -62,6 +62,8 @@ const INITIAL_FRAMES: Record<WindowId, Frame> = {
 interface DesktopProps {
   apps: AppState;
   tracing: AppId | null;
+  /** Lines typed into the terminal while a trace plays, not read yet. */
+  typedAhead: string[];
   /** Fields a running trace is about to change. */
   locked: { draft: boolean; editor: boolean; player: boolean };
   restarting: boolean;
@@ -72,6 +74,7 @@ interface DesktopProps {
   onSearch: (query: string) => void;
   onDraft: (text: string) => void;
   onCommand: (command: string) => void;
+  onControl: (key: "c" | "d") => void;
   onOpenFile: () => void;
   onEditorText: (text: string) => void;
   onKeystroke: (app: TextApp, key: string) => void;
@@ -89,6 +92,23 @@ export function Desktop(props: DesktopProps) {
   const [topZ, setTopZ] = useState(2);
   const [startOpen, setStartOpen] = useState(false);
   const [selectedIcon, setSelectedIcon] = useState<WindowId | null>(null);
+
+  // A window that opens from outside the desktop (a "Try it" button, the
+  // Memory tab) comes to the front, as one opened from here does.
+  const [windows, setWindows] = useState(apps.windows);
+  if (windows !== apps.windows) {
+    setWindows(apps.windows);
+    const opened = ORDER.filter((id) => windows[id] === "closed" && apps.windows[id] !== "closed");
+    if (opened.length > 0) {
+      const z = topZ + opened.length;
+      setTopZ(z);
+      setFrames((f) => {
+        const next = { ...f };
+        opened.forEach((id, i) => (next[id] = { ...next[id], z: z - opened.length + 1 + i, minimized: false }));
+        return next;
+      });
+    }
+  }
 
   const isOpen = (id: WindowId) => apps.windows[id] === "open";
   const focusedId = ORDER.filter((id) => isOpen(id) && !frames[id].minimized).sort(
@@ -209,7 +229,13 @@ export function Desktop(props: DesktopProps) {
                 />
               )}
               {id === "terminal" && (
-                <TerminalApp state={apps.terminal} program={apps.program} onCommand={props.onCommand} />
+                <TerminalApp
+                  state={apps.terminal}
+                  program={apps.program}
+                  typedAhead={props.typedAhead}
+                  onCommand={props.onCommand}
+                  onControl={props.onControl}
+                />
               )}
               {id === "editor" && (
                 <EditorApp

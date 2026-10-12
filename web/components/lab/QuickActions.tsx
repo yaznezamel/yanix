@@ -1,21 +1,33 @@
 "use client";
 
-import { inputLimit, programAnswers } from "@/components/desktop/TerminalApp";
+import { useEffect, useRef } from "react";
+import { finePointer } from "@/components/desktop/TerminalApp";
 import { SUGGESTED_QUERIES } from "@/lib/xray/apps";
 import { programReads } from "@/lib/xray/scenarios";
-import type { AppId, AppState, ScenarioRequest } from "@/lib/xray/types";
+import { CONTROL_KEYS, controlKey, inputLimit, programAnswers, shownLine } from "@/lib/xray/shell";
+import type { AppId, AppState, Program, ScenarioRequest, TermLine } from "@/lib/xray/types";
 
 // On a phone the simulated screen is too small to tap, so the same actions are
 // offered as full-size buttons under it. Each one starts the trace the desktop
 // would: open an app first, then do the thing it is for. While a trace plays
 // the panel shrinks to one line, so the story right below it stays in view.
+// While a C program runs in the terminal, its answer bar shows at every
+// width: the terminal's own text is small on the simulated screen.
 
 interface QuickActionsProps {
   apps: AppState;
+  /** The C program running in the open terminal, as it is once the playing trace is over. */
+  program: Program | null;
+  /** Lines typed while the trace plays, waiting in the TTY. */
+  typedAhead: string[];
+  /** The playing trace ends with the program asking for a line. */
+  toQuestion: boolean;
   /** The trace that is playing, if any: the panel shrinks to one line meanwhile. */
   playing: string | null;
   onRequest: (request: ScenarioRequest) => void;
   onCommand: (command: string) => void;
+  /** Ctrl+C or Ctrl+D, typed into the program's answer box or pressed as a button. */
+  onControl: (key: "c" | "d") => void;
   onFinish: () => void;
   /** Called after an action starts a trace, to bring its story into view. */
   onStarted: () => void;
@@ -133,7 +145,10 @@ function actionsFor(apps: AppState, onRequest: (r: ScenarioRequest) => void, onC
   return actions;
 }
 
-export function QuickActions({ apps, playing, onRequest, onCommand, onFinish, onStarted }: QuickActionsProps) {
+export function QuickActions(props: QuickActionsProps) {
+  const { apps, program, playing, onRequest, onCommand, onFinish, onStarted } = props;
+  if (program) return <ProgramInput {...props} program={program} />;
+
   if (playing !== null) {
     return (
       <section
@@ -153,10 +168,6 @@ export function QuickActions({ apps, playing, onRequest, onCommand, onFinish, on
         </button>
       </section>
     );
-  }
-
-  if (programReads(apps.program) && apps.windows.terminal === "open") {
-    return <ProgramInput apps={apps} onCommand={onCommand} onStarted={onStarted} />;
   }
 
   const actions = actionsFor(apps, onRequest, onCommand);
@@ -185,63 +196,193 @@ export function QuickActions({ apps, playing, onRequest, onCommand, onFinish, on
   );
 }
 
-/** ./marks is waiting for a line: type it here, since the terminal on the small screen is hard to reach. */
+/** What the program printed since you last answered it (before the question it asks now), the newest last. */
+function recentOutput(lines: TermLine[], max: number): string[] {
+  const out: string[] = [];
+  let i = lines.length - 1;
+  const asking = lines[i];
+  if (asking?.kind === "ask" && asking.answer === undefined) i--;
+  for (; i >= 0 && out.length < max; i--) {
+    const line = lines[i]!;
+    if (line.kind !== "output") break;
+    out.unshift(line.text);
+  }
+  return out;
+}
+
+/**
+ * The C program's answer bar. While it reads, its question and a field to
+ * answer it; while a trace plays, a way to skip to the question, or to type
+ * ahead: the line waits in the TTY until the program reads it. On a phone it
+ * also shows what the program printed last; on a wide screen it keeps to two
+ * rows, so the screen above it keeps its size.
+ */
 function ProgramInput({
   apps,
+  program,
+  typedAhead,
+  toQuestion,
+  playing,
   onCommand,
+  onControl,
+  onFinish,
   onStarted,
-}: Pick<QuickActionsProps, "apps" | "onCommand" | "onStarted">) {
+}: QuickActionsProps & { program: Program }) {
+  const inputRef = useRef<HTMLInputElement>(null);
+  const name = program.kind;
+  const reading = playing === null && programReads(apps.program);
   const last = apps.terminal.lines.at(-1);
-  const name = apps.program?.kind === "cores" ? "cores" : "marks";
-  const question = last?.kind === "ask" && last.answer === undefined ? last.text.trim() : `${name} is reading`;
-  const answers = programAnswers(apps.program);
-  function send(text: string) {
+  const question = reading && last?.kind === "ask" && last.answer === undefined ? last.text.trim() : null;
+  const answers = programAnswers(program);
+  const output = recentOutput(apps.terminal.lines, 5);
+  const said =
+    question ??
+    (typedAhead.length > 0
+      ? `Waiting in the TTY: ${typedAhead.map(shownLine).join(" · ")}`
+      : reading
+        ? "reading a line"
+        : "type ahead, and your line waits in the TTY until it reads");
+
+  // The question comes: if nothing else has the keyboard, the field takes it.
+  useEffect(() => {
+    if (!reading || !finePointer()) return;
+    const active = document.activeElement;
+    if (active === null || active === document.body) inputRef.current?.focus({ preventScroll: true });
+  }, [reading]);
+
+  const keyboard = () => {
+    if (finePointer()) inputRef.current?.focus({ preventScroll: true });
+  };
+
+  function send(text: string, fromField: boolean) {
     onCommand(text);
     onStarted();
+    if (fromField) inputRef.current?.focus({ preventScroll: true });
+    else keyboard();
   }
+
+  function control(key: "c" | "d", fromField: boolean) {
+    onControl(key);
+    onStarted();
+    if (fromField) inputRef.current?.focus({ preventScroll: true });
+    else keyboard();
+  }
+
+  const keys = (
+    <span className="flex shrink-0 items-center gap-1.5">
+      {CONTROL_KEYS.map((k) => (
+        <button
+          key={k.key}
+          type="button"
+          title={`${k.label}: ${k.what}`}
+          onClick={() => control(k.key, false)}
+          className="min-h-9 whitespace-nowrap rounded-md border border-lab-line bg-lab-panel2 px-2 text-[12px] text-lab-ink/85 xl:min-h-6 xl:py-0.5"
+        >
+          <span className="font-mono">{k.label}</span> <span className="text-lab-muted">{k.what}</span>
+        </button>
+      ))}
+    </span>
+  );
+
   return (
-    <section aria-label={`Answer ./${name}`} className="rounded-xl border border-lab-line bg-lab-panel p-3 md:hidden">
-      <h2 className="mb-1 font-mono text-[11px] uppercase tracking-[0.14em] text-lab-muted">./{name} asks</h2>
+    <section
+      aria-label={`Answer ./${name}`}
+      className="rounded-xl border border-lab-line bg-lab-panel p-3 xl:h-[84px] xl:py-2.5"
+    >
       <form
-        className="flex flex-col gap-2"
+        className="flex flex-col gap-2 xl:gap-1.5"
         onSubmit={(e) => {
           e.preventDefault();
           const value = new FormData(e.currentTarget).get("answer");
-          send(typeof value === "string" ? value : "");
+          send(typeof value === "string" ? value : "", true);
           e.currentTarget.reset();
         }}
       >
-        <label htmlFor="program-answer" className="font-mono text-[13px] text-lab-ink">
-          {question}
-        </label>
-        <div className="flex gap-2">
-          <input
-            id="program-answer"
-            name="answer"
-            autoComplete="off"
-            spellCheck={false}
-            maxLength={inputLimit(apps.program)}
-            className="min-h-11 min-w-0 flex-1 rounded-lg border border-lab-line bg-lab-panel2 px-3 font-mono text-[14px] text-lab-ink outline-none focus:border-signal/60"
-          />
-          <button
-            type="submit"
-            className="min-h-11 shrink-0 rounded-lg border border-signal/60 bg-signal/10 px-4 text-[14px] font-medium text-signal"
+        <h2 className="font-mono text-[11px] uppercase tracking-[0.14em] text-lab-muted xl:hidden">
+          ./{name} {reading ? "asks" : "is running"}
+        </h2>
+        {output.length > 0 && (
+          <pre
+            aria-label={`What ./${name} printed last`}
+            className="max-h-40 overflow-y-auto rounded-md bg-[#0c0d10] px-2.5 py-1.5 font-mono text-[12px] leading-relaxed whitespace-pre-wrap break-words text-[#e8edf2] xl:hidden"
           >
-            Enter
-          </button>
+            {output.join("\n")}
+          </pre>
+        )}
+        <div className="flex items-center gap-3">
+          <label
+            htmlFor="program-answer"
+            title={question ?? undefined}
+            className={`min-w-0 flex-1 font-mono text-[13px] xl:truncate ${question ? "text-lab-ink" : "text-lab-muted"}`}
+          >
+            <span className="hidden text-lab-muted xl:inline">
+              ./{name} {reading ? "asks" : "is running"}:{" "}
+            </span>
+            {said}
+            {name === "marks" && reading && (
+              <span className="text-lab-muted"> · to finish, answer n when it asks for another</span>
+            )}
+          </label>
+          <span className="hidden xl:flex">{keys}</span>
         </div>
-        <div className="flex flex-wrap items-center gap-2">
-          <span className="text-[12px] text-lab-muted">Or answer</span>
-          {answers.map((a) => (
+        <div className="flex flex-col gap-2 xl:flex-row xl:items-center xl:gap-2.5">
+          <div className="flex gap-2 xl:min-w-0 xl:flex-1">
+            <input
+              ref={inputRef}
+              id="program-answer"
+              name="answer"
+              autoComplete="off"
+              spellCheck={false}
+              maxLength={inputLimit(program)}
+              onKeyDown={(e) => {
+                const key = controlKey(e);
+                const field = e.currentTarget;
+                if (key === null || (key === "c" && field.selectionStart !== field.selectionEnd)) return;
+                e.preventDefault();
+                if (key === "c") field.value = "";
+                if (key === "c" || field.value === "") control(key, true);
+              }}
+              className="min-h-11 min-w-0 flex-1 rounded-lg border border-lab-line bg-lab-panel2 px-3 font-mono text-[14px] text-lab-ink outline-none focus:border-signal/60 focus-visible:ring-2 focus-visible:ring-signal/40 xl:min-h-9"
+            />
             <button
-              key={a}
-              type="button"
-              onClick={() => send(a)}
-              className="min-h-9 rounded-md border border-lab-line bg-lab-panel2 px-2.5 font-mono text-[13px] text-lab-ink"
+              type="submit"
+              className="min-h-11 shrink-0 rounded-lg border border-signal/60 bg-signal/10 px-4 text-[14px] font-medium text-signal xl:min-h-9"
             >
-              {a}
+              Enter
             </button>
-          ))}
+          </div>
+          {toQuestion ? (
+            <button
+              type="button"
+              onClick={() => {
+                onFinish();
+                keyboard();
+              }}
+              className="min-h-9 self-start whitespace-nowrap rounded-md border border-signal/60 bg-signal/10 px-2.5 text-[13px] font-medium text-signal xl:self-auto"
+            >
+              Skip to the question
+            </button>
+          ) : (
+            answers.length > 0 && (
+              <div className="flex flex-wrap items-center gap-2 xl:shrink-0 xl:flex-nowrap">
+                <span className="text-[12px] text-lab-muted xl:sr-only">Or answer</span>
+                {answers.map((a) => (
+                  <button
+                    key={a}
+                    type="button"
+                    onClick={() => send(a, false)}
+                    className="min-h-9 whitespace-nowrap rounded-md border border-lab-line bg-lab-panel2 px-2.5 font-mono text-[13px] text-lab-ink"
+                  >
+                    {a}
+                  </button>
+                ))}
+              </div>
+            )
+          )}
+        </div>
+        <div className="flex flex-wrap items-center gap-2 xl:hidden">
+          <span className="text-[12px] text-lab-muted">Or press</span>
+          {keys}
         </div>
       </form>
     </section>

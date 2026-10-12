@@ -8,6 +8,10 @@ import { clickStep, drawStep, keysStep } from "./common";
 // down to the SSD and back. Both cat in the terminal and the text editor use
 // the same kernel path.
 
+/** notes.txt's size: its lines, each ending in a newline. */
+const FILE_BYTES = new TextEncoder().encode(`${NOTES_TXT.join("\n")}\n`).length;
+const bytes = (text: string) => new TextEncoder().encode(text).length;
+
 interface Reader {
   node: NodeId;
   /** Name used in sentences, e.g. "cat" or "The editor". */
@@ -30,6 +34,11 @@ function readSteps(reader: Reader, m: MachineState, file: string): Step[] {
       body: `${Name} asks the kernel to open the file for reading. The syscall instruction switches the CPU to kernel mode, and the VFS takes over.`,
       code: [{ project: "linux", path: "fs/open.c", symbol: "do_sys_openat2" }],
       timescale: "us",
+      data: { amount: `${bytes(reader.path) + 1} bytes`, what: `the path, "${reader.path}" and its '\\0', copied from ${reader.name}'s memory into the kernel` },
+      aws: {
+        service: "AWS IAM",
+        text: "A system call is like an AWS API call: the program cannot touch the hardware, so it asks a privileged service that checks who is asking before acting. IAM checks policies on every request; the kernel checks the file's owner and mode before it hands out the file.",
+      },
     },
     {
       id: "path-walk",
@@ -42,6 +51,14 @@ function readSteps(reader: Reader, m: MachineState, file: string): Step[] {
         { project: "linux", path: "fs/dcache.c", symbol: "__d_lookup_rcu" },
       ],
       timescale: "ns",
+      data: {
+        amount: `${reader.path.split("/").filter(Boolean).length} ${reader.path.split("/").filter(Boolean).length === 1 ? "name" : "names"}`,
+        what: `looked up one at a time in the dentry cache: ${reader.path.split("/").filter(Boolean).join(", then ")}`,
+      },
+      aws: {
+        service: "Amazon S3",
+        text: "S3 has no directories to walk: a key like notes/2026/today.txt is a single name, found in one lookup, and its slashes are only characters. A Linux path is walked a directory at a time, which is why the dentry cache keeps recent names in RAM.",
+      },
     },
     {
       id: "fd",
@@ -55,6 +72,7 @@ function readSteps(reader: Reader, m: MachineState, file: string): Step[] {
         { project: "linux", path: "fs/file.c", symbol: "fd_install" },
       ],
       timescale: "ns",
+      data: { amount: "4 bytes", what: "the file descriptor, an int: the index of the open file in the process's table" },
     },
     {
       id: "read",
@@ -68,6 +86,7 @@ function readSteps(reader: Reader, m: MachineState, file: string): Step[] {
         { project: "linux", path: "mm/filemap.c", symbol: "filemap_read" },
       ],
       timescale: "ns",
+      data: { amount: `${FILE_BYTES} bytes`, what: "the whole file, inside the first 4 KiB page: the page cache always works in whole pages" },
     },
     cached
       ? {
@@ -79,6 +98,11 @@ function readSteps(reader: Reader, m: MachineState, file: string): Step[] {
           body: "The page is already in RAM from the last read. No filesystem lookup, no SSD, no interrupt and no waiting: the kernel can copy the data straight away.",
           code: [{ project: "linux", path: "mm/filemap.c", symbol: "filemap_get_pages" }],
           timescale: "ns",
+          data: { amount: "0 bytes from the SSD", what: "the 4 KiB page is already in RAM" },
+          aws: {
+            service: "Amazon CloudFront",
+            text: "This is CloudFront's \"Hit from cloudfront\": the edge location already holds the object and answers without asking the origin. The page cache is the same idea one level down, RAM in front of the SSD.",
+          },
         }
       : {
           id: "cache-miss",
@@ -92,6 +116,11 @@ function readSteps(reader: Reader, m: MachineState, file: string): Step[] {
             { project: "linux", path: "mm/readahead.c", symbol: "page_cache_sync_ra" },
           ],
           timescale: "ns",
+          data: { amount: "4 KiB", what: "a page of RAM, added to the cache locked and empty, for the SSD to fill" },
+          aws: {
+            service: "Amazon CloudFront",
+            text: "This is CloudFront's \"Miss from cloudfront\": the edge forwards the request to the origin, waits, and keeps a copy for the next viewer, as the kernel keeps this page for the next read.",
+          },
         },
   ];
 
@@ -108,6 +137,7 @@ function readSteps(reader: Reader, m: MachineState, file: string): Step[] {
           { project: "linux", path: "fs/ext4/inode.c", symbol: "ext4_map_blocks" },
         ],
         timescale: "us",
+        data: { amount: "1 block", what: "of 4 KiB, ext4's usual block size: where the file's first bytes are on the SSD" },
       },
       {
         id: "bio",
@@ -120,6 +150,7 @@ function readSteps(reader: Reader, m: MachineState, file: string): Step[] {
           { project: "linux", path: "block/blk-mq.c", symbol: "blk_mq_submit_bio" },
         ],
         timescale: "us",
+        data: { amount: "8 sectors", what: "of 512 bytes, the block layer's unit: one 4 KiB page to read" },
       },
       {
         id: "nvme-cmd",
@@ -133,6 +164,10 @@ function readSteps(reader: Reader, m: MachineState, file: string): Step[] {
           { project: "linux", path: "drivers/nvme/host/core.c", symbol: "nvme_setup_rw" },
         ],
         timescale: "us",
+        aws: {
+          service: "Amazon EBS on Nitro",
+          text: "On Nitro-based EC2 instances, EBS volumes appear as NVMe devices (/dev/nvme0n1): the guest's driver writes these same 64-byte commands, and the Nitro card carries them over the network to the EBS volume instead of to flash on the board.",
+        },
       },
       {
         id: "doorbell",
@@ -143,6 +178,7 @@ function readSteps(reader: Reader, m: MachineState, file: string): Step[] {
         body: "The driver writes the queue's new tail position to the SSD's doorbell register, an address on the PCIe device mapped into memory. That single write tells the SSD there is work.",
         code: [{ project: "linux", path: "drivers/nvme/host/pci.c", symbol: "nvme_write_sq_db" }],
         timescale: "us",
+        data: { amount: "4 bytes", what: "the queue's new tail index, one 32-bit write to the doorbell register over PCIe" },
       },
       {
         id: "sleep",
@@ -152,6 +188,7 @@ function readSteps(reader: Reader, m: MachineState, file: string): Step[] {
         body: `${Name} can't go on without the data, so its thread sleeps until the page is unlocked, and the scheduler runs other work on the core in the meantime.`,
         code: [{ project: "linux", path: "kernel/sched/core.c", symbol: "schedule" }],
         timescale: "us",
+        data: { amount: "0 CPU", what: "the waiting thread uses no CPU: the core runs other work" },
       },
       {
         id: "ssd-read",
@@ -161,6 +198,11 @@ function readSteps(reader: Reader, m: MachineState, file: string): Step[] {
         title: "Inside the SSD",
         body: "The SSD's controller fetches the command from RAM over PCIe, looks up where that block really lives in its flash (its translation layer) and reads the cells. Flash is fast, but much slower than RAM: this is the wait the page cache exists to skip.",
         timescale: "us",
+        data: { amount: "4 KiB", what: "read from the flash cells, wherever the SSD's translation layer put the block" },
+        aws: {
+          service: "Amazon EC2 instance store",
+          text: "Some EC2 instance types have NVMe SSDs on the host itself, called instance store: the storage-optimised I family, for example, and types with a d in their name such as m6id. Reads take this same path, without a network in between, but the data is lost when the instance stops.",
+        },
       },
       {
         id: "dma",
@@ -170,6 +212,11 @@ function readSteps(reader: Reader, m: MachineState, file: string): Step[] {
         learns: withCached(m, file),
         body: "The SSD writes the data straight into the page-cache page in RAM with DMA. The CPU doesn't copy a byte.",
         timescale: "us",
+        data: { amount: "4 KiB", what: "written by the SSD straight into the page-cache page: the CPU copies nothing" },
+        aws: {
+          service: "AWS Nitro System",
+          text: "Nitro cards take storage and networking work off an instance's CPUs: data reaches the instance's memory by DMA while its vCPUs run your code. The same division of labour as here, between the SSD and the CPU.",
+        },
       },
       {
         id: "irq",
@@ -208,6 +255,7 @@ function readSteps(reader: Reader, m: MachineState, file: string): Step[] {
       { project: "linux", path: "lib/iov_iter.c", symbol: "copy_page_to_iter" },
     ],
     timescale: "ns",
+    data: { amount: `${FILE_BYTES} bytes`, what: `copied from the page cache into ${reader.name}'s buffer: the only copy the CPU makes` },
   });
   return steps;
 }
@@ -222,6 +270,11 @@ function doneStep(m: MachineState, file: string): Step {
     body: cached
       ? "No ext4 lookup, no SSD, no interrupt and no sleeping: a page cache hit skips the whole storage stack. That is the whole reason the page cache exists."
       : "notes.txt is now in the page cache, in RAM nobody else needed. Read it again and the second read never reaches the SSD.",
+    data: { amount: "4 KiB of RAM", what: "the file's page stays in the page cache until memory is needed for something else" },
+    aws: {
+      service: "Amazon ElastiCache",
+      text: "Keeping hot data in RAM in front of slower storage is what ElastiCache does for a database: the first read pays for the trip, later ones are answered from memory. The page cache does it for every file, with no setup.",
+    },
   };
 }
 
@@ -241,6 +294,7 @@ export function readFile(m: MachineState): Scenario {
         { project: "linux", path: "drivers/tty/tty_io.c" },
       ],
       timescale: "us",
+      data: { amount: `${bytes("cat notes.txt\n")} bytes`, what: `"cat notes.txt\\n", out of the pseudo-terminal's other end to bash` },
     },
     {
       id: "fork-exec",
@@ -277,6 +331,7 @@ export function readFile(m: MachineState): Scenario {
       ],
       timescale: "us",
       ui: { terminalAppend: NOTES_TXT.map((text) => ({ kind: "output" as const, text })) },
+      data: { amount: `${FILE_BYTES} bytes`, what: "the file's bytes, in one write() to the pseudo-terminal" },
     },
     {
       id: "exit",

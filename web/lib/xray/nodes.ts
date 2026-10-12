@@ -534,12 +534,12 @@ const NODE_LIST: MachineNode[] = [
   // Hardware, bottom row: peripherals and the chipset's controllers
   {
     id: "inputdev",
-    label: "Keyboard",
-    sub: "mouse · USB",
+    label: "Input devices",
+    sub: "keys · mouse",
     layer: "hardware",
     x: 16, y: 688, w: 96, h: 48,
     about:
-      "A USB keyboard has its own small controller that scans the keys and prepares reports. It cannot interrupt the computer: the USB host controller asks it for news at a fixed interval.",
+      "The keyboard and the mouse. Each has its own small controller that notices key presses or movement and prepares reports. Neither can interrupt the computer: the USB host controller asks each for news at a fixed interval.",
     code: [{ project: "linux", path: "drivers/hid/usbhid/hid-core.c" }],
   },
   {
@@ -691,59 +691,20 @@ export const TOPOLOGY: { d: string; label?: string; lx?: number; ly?: number }[]
   { d: "M 116 683 H 422 V 741 H 116 Z", label: "chipset", lx: 269, ly: 750 },
 ];
 
-/** Hand-routed detours so a path does not cut through unrelated boxes. */
+/**
+ * Hand-routed detours, kept where the router's shortest way would read worse:
+ * the resolver's referrals run up the side of the name servers.
+ */
 const VIA: Partial<Record<`${NodeId}>${NodeId}`, Point[]>> = {
   "resolver>root": [{ x: 862, y: 244 }, { x: 862, y: 60 }],
   "resolver>tld": [{ x: 862, y: 244 }, { x: 862, y: 110 }],
   "resolver>auth": [{ x: 862, y: 244 }, { x: 862, y: 160 }],
 };
 
-// The kernel's middle column is two boxes wide. Paths between a box there and
-// the system call bar, or between boxes two or more rows apart on the same
-// side, run up the gap beside the column instead of through the boxes.
-const CENTRE = { left: 214, right: 504, split: 364, firstRow: 244 } as const;
-const TRUNK = { left: 200, right: 516 } as const;
-
-function inCentre(id: NodeId): boolean {
-  const n = NODES[id];
-  return n.layer === "kernel" && !n.bar && n.x >= CENTRE.left && n.x + n.w <= CENTRE.right;
-}
-
-function side(id: NodeId): "left" | "right" | "both" {
-  const n = NODES[id];
-  if (n.w > CENTRE.split - CENTRE.left) return "both";
-  return n.x < CENTRE.split ? "left" : "right";
-}
-
-function trunkRoute(from: NodeId, to: NodeId): Point[] {
-  const a = NODES[from];
-  const b = NODES[to];
-  if (b.bar && inCentre(from) && a.y > CENTRE.firstRow) {
-    const s = side(from);
-    if (s === "both") return [];
-    const x = TRUNK[s];
-    return [{ x, y: centerOf(from).y }, { x, y: CENTRE.firstRow - 6 }];
-  }
-  if (inCentre(from) && inCentre(to)) {
-    const sa = side(from);
-    const sb = side(to);
-    const rows = Math.abs(a.y - b.y) / 52;
-    if (rows >= 2 && (sa === sb || sa === "both" || sb === "both")) {
-      const s = sa === "both" ? sb : sa;
-      if (s === "both") return [];
-      const x = TRUNK[s];
-      return [{ x, y: centerOf(from).y }, { x, y: centerOf(to).y }];
-    }
-  }
-  return [];
-}
-
-export function viaPoints(from: NodeId, to: NodeId): Point[] {
+/** A hand-routed detour between two boxes, in either direction, if there is one. */
+export function viaOverride(from: NodeId, to: NodeId): Point[] | null {
   const forward = VIA[`${from}>${to}`];
   if (forward) return forward;
   const backward = VIA[`${to}>${from}`];
-  if (backward) return [...backward].reverse();
-  const trunk = trunkRoute(from, to);
-  if (trunk.length > 0) return trunk;
-  return [...trunkRoute(to, from)].reverse();
+  return backward ? [...backward].reverse() : null;
 }

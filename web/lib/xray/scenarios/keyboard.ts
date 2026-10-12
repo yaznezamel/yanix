@@ -4,6 +4,7 @@ import {
   inputEvent,
   keyInfo,
   keyLabel,
+  mscScan,
   synReport,
   usbTransfer,
   waylandKey,
@@ -47,6 +48,14 @@ export function keystroke(app: "browser" | "editor", key: string): Scenario {
       title: "The USB controller asks",
       body: "The USB host controller in the chipset polls the keyboard at the interval the keyboard asked for, every few milliseconds or faster. This time there's a report, and the controller writes it into a buffer in RAM with DMA.",
       timescale: "ms",
+      data: {
+        amount: "8 bytes",
+        what: "the report, copied into a buffer in RAM by DMA. How often the controller asks is the keyboard's choice, set by bInterval in its endpoint descriptor.",
+      },
+      aws: {
+        service: "AWS Lambda and Amazon SQS",
+        text: "A keyboard can't push, so the host asks on a schedule. Lambda reads an SQS queue the same way: a poller AWS runs for you (an event source mapping) checks the queue and invokes your function only when messages are there, as the controller interrupts the CPU only when there is a report.",
+      },
     },
     {
       id: "usb-irq",
@@ -86,6 +95,10 @@ export function keystroke(app: "browser" | "editor", key: string): Scenario {
         { project: "linux", path: "drivers/hid/hid-input.c", symbol: "hidinput_hid_event" },
       ],
       timescale: "us",
+      aws: {
+        service: "AWS Glue Schema Registry",
+        text: "The keyboard describes its report's layout once, when it's plugged in, and every report after that is read with it. A schema registry does the same for streaming data: producers register a record's layout once, and consumers decode each record with it.",
+      },
     },
     {
       id: "evdev",
@@ -93,15 +106,19 @@ export function keystroke(app: "browser" | "editor", key: string): Scenario {
       path: ["usbdrv", "input"],
       frames: [
         dataFrame(0, "HID report", "Parsed with the keyboard's descriptor", hidReport(key)),
-        dataFrame(1, "Input event", "What evdev queues for each reader", inputEvent(key), synReport),
+        dataFrame(1, "Input event", "What evdev queues for each reader", mscScan(key), inputEvent(key), synReport),
       ],
       title: "An input event",
-      body: "input_event() hands the key press to every handler attached to the keyboard. evdev, the handler behind /dev/input/event*, timestamps it and queues a 24-byte struct input_event for each program that has the device open, then a SYN_REPORT that closes the batch and wakes the readers.",
+      body: "hid-input calls input_event() twice: the scan code (MSC_SCAN), then the key itself. Every handler attached to the keyboard gets them; evdev, the one behind /dev/input/event*, timestamps each and queues it as a 24-byte struct input_event for every program that has the device open, then a SYN_REPORT that closes the batch and wakes the readers.",
       code: [
         { project: "linux", path: "drivers/input/input.c", symbol: "input_event" },
         { project: "linux", path: "drivers/input/evdev.c", symbol: "evdev_events" },
       ],
       timescale: "us",
+      aws: {
+        service: "Amazon SNS",
+        text: "evdev keeps a separate queue for each program that opened the device, and each gets its own copy of every event. That is SNS fan-out: one message published to a topic, delivered to every SQS queue subscribed to it.",
+      },
     },
     {
       id: "wake-compositor",
@@ -120,7 +137,7 @@ export function keystroke(app: "browser" | "editor", key: string): Scenario {
       id: "libinput",
       phase: "compositor",
       path: ["input", "syscall", "shell"],
-      frames: [dataFrame(0, "Input event", "read() from /dev/input/event*", inputEvent(key), synReport)],
+      frames: [dataFrame(0, "Input event", "read() from /dev/input/event*", mscScan(key), inputEvent(key), synReport)],
       title: "The compositor reads it",
       body: "The compositor reads the queued events through libinput, which keeps track of which keys are down and passes the key press on.",
       code: [{ project: "linux", path: "drivers/input/evdev.c", symbol: "evdev_read" }],
@@ -137,6 +154,10 @@ export function keystroke(app: "browser" | "editor", key: string): Scenario {
         { project: "mutter", path: "src/wayland/meta-wayland-keyboard.c" },
       ],
       timescale: "us",
+      aws: {
+        service: "Amazon EventBridge",
+        text: "The compositor works like an event bus with two rules: if the key is one of its own shortcuts, it handles it; otherwise it delivers the event to a single target, the window with keyboard focus.",
+      },
     },
     {
       id: "wl-key",
@@ -150,6 +171,10 @@ export function keystroke(app: "browser" | "editor", key: string): Scenario {
         { project: "wayland", path: "protocol/wayland.xml" },
       ],
       timescale: "us",
+      aws: {
+        service: "Amazon S3 event notifications",
+        text: "The event carries a key code, not a letter, and each app looks up what it means in the keymap it got when it connected. An S3 event notification works the same way: it says which object changed, not what is in it, and the receiver fetches the object only if it needs it.",
+      },
     },
     app === "browser"
       ? {
@@ -233,7 +258,7 @@ export function keystroke(app: "browser" | "editor", key: string): Scenario {
       path: ["inputdev", "usbhc", "irq", "usbdrv", "input"],
       frames: [
         dataFrame(0, "HID report", "All keys up", hidReport(key, false)),
-        dataFrame(3, "Input event", "The release", inputEvent(key, false), synReport),
+        dataFrame(3, "Input event", "The release", mscScan(key), inputEvent(key, false), synReport),
       ],
       title: "You let go",
       body: `Releasing the key sends a new report with the slot empty, and the same path delivers ${code} with value 0, released. Hold a key down instead and the keyboard sends nothing new: the app repeats the key itself, at the rate the compositor announced.`,

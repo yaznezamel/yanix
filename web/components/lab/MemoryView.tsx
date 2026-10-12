@@ -1,12 +1,13 @@
 "use client";
 
+import { useRef } from "react";
 import { HEADER, PAGE, topSize, type Chunk } from "@/lib/xray/marks/heap";
 import { CALLEE, MAIN, MAPPED, RETURNS, STUDENT_SIZE, TTY_BLOCK, hex, layoutOf, type Layout } from "@/lib/xray/marks/layout";
 import { CHANGE, chunkKey, userOf, type ProgramState } from "@/lib/xray/marks/program";
 import { MARKS_C } from "@/lib/xray/marks/source";
 import type { Program } from "@/lib/xray/types";
 import { CoresView } from "./CoresView";
-import { Changed, Frame, LineBytes, Panel, Source, Unset, ViewHeader, type Slot } from "./memoryParts";
+import { Changed, Frame, FrameGuide, LineBytes, Panel, Source, Unset, ViewHeader, useChangesInView, type Slot } from "./memoryParts";
 
 // The Memory tab: the memory of the C program in the terminal as the trace
 // goes, read like a debugger shows it. This file draws examples/marks/marks.c;
@@ -30,6 +31,7 @@ export function MemoryView({ program, terminalOpen, onRun, onOpenTerminal }: Mem
 }
 
 const STAGE: Record<ProgramState["stage"], string> = {
+  starting: "not started yet",
   running: "running",
   name: "waiting for a name",
   marks: "waiting for marks",
@@ -59,14 +61,27 @@ function MarksView({ program }: { program: ProgramState }) {
   const layout = layoutOf(program.run);
   const changed = new Set(program.changed);
   const exited = program.stage === "exited";
+  const box = useRef<HTMLDivElement>(null);
+  useChangesInView(box, program);
+  if (program.stage === "starting") {
+    return (
+      <div className="h-full overflow-y-auto px-3 pb-3">
+        <ViewHeader command="./marks" stage={STAGE.starting} exited={false} run={program.run} />
+        <p className="max-w-[60ch] text-[12.5px] leading-relaxed text-lab-muted">
+          bash is about to start ./marks: there is no process yet, so no memory to show. It appears when the child
+          that bash creates calls execve().
+        </p>
+      </div>
+    );
+  }
 
   return (
-    <div className="@container h-full overflow-y-auto px-3 pb-3">
-      <ViewHeader command="./marks" stage={STAGE[program.stage]} exited={exited} run={program.run} />
+    <div ref={box} className="@container h-full overflow-y-auto px-3 pb-3">
+      <ViewHeader command="./marks" stage={STAGE[program.stage]} exited={exited} run={program.run} endedBy={program.endedBy} />
       {/* One column when narrow; the source above the stack and the heap when wider; three columns when wide. */}
       <div
         className={`grid items-start gap-3 [grid-template-areas:'source'_'stack'_'heap'_'map'] @2xl:grid-cols-2 @2xl:[grid-template-areas:'source_source'_'stack_heap'_'map_map'] @5xl:grid-cols-[minmax(0,0.9fr)_minmax(0,1fr)_minmax(0,1fr)] @5xl:[grid-template-areas:'source_stack_heap'_'map_stack_heap'] ${
-          exited ? "opacity-60" : ""
+          exited ? "grayscale" : ""
         }`}
       >
         <div className="min-w-0 [grid-area:source]">
@@ -193,9 +208,11 @@ function Stack({ program, layout, changed }: { program: ProgramState; layout: La
     return (
       <Panel title="Stack" sub="grows down ↓" lit={changed.has(CHANGE.main)}>
         <p className="px-2.5 py-2 text-[12.5px] text-lab-muted">
-          {program.at > 0
-            ? "main() has returned: no frame is left."
-            : "main() has not started yet: the stack holds the program's arguments, its environment and the C library's start-up frames."}
+          {program.endedBy
+            ? "main() never returned: a signal ended the process, and its stack went with it."
+            : program.at > 0
+              ? "main() has returned: no frame is left."
+              : "main() has not started yet: the stack holds the program's arguments, its environment and the C library's start-up frames."}
         </p>
       </Panel>
     );
@@ -264,6 +281,7 @@ function Stack({ program, layout, changed }: { program: ProgramState; layout: La
           ]}
         />
       )}
+      <FrameGuide />
     </Panel>
   );
 }
@@ -332,10 +350,16 @@ function HeapView({ program, layout, changed }: { program: ProgramState; layout:
             chunk={chunk}
             program={program}
             pointers={pointers.get(chunk.at) ?? []}
-            hot={changed.has(chunkKey(chunk.at))}
+            hot={
+              changed.has(chunkKey(chunk.at)) ||
+              (chunk.tag === "stdout" && changed.has(CHANGE.stdout)) ||
+              (chunk.tag === "stdin" && changed.has(CHANGE.stdin)) ||
+              (chunk.tag === "tcache" && changed.has(CHANGE.tcache))
+            }
           />
         ))}
         <li
+          data-changed={changed.has(CHANGE.top) || changed.has(CHANGE.brk) || undefined}
           className={`grid grid-cols-[4.6rem_3.4rem_minmax(0,1fr)] items-baseline gap-x-2 rounded px-1 py-[3px] ${
             changed.has(CHANGE.top) || changed.has(CHANGE.brk) ? "bg-signal/12 ring-1 ring-signal/50" : ""
           }`}
@@ -372,6 +396,7 @@ function ChunkRow({
   const free = chunk.state !== "used";
   return (
     <li
+      data-changed={hot || undefined}
       className={`grid grid-cols-[4.6rem_3.4rem_minmax(0,1fr)] items-baseline gap-x-2 rounded px-1 py-[3px] ${
         hot ? "bg-signal/12 ring-1 ring-signal/50" : ""
       }`}

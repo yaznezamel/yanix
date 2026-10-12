@@ -4,7 +4,7 @@ import { MotionConfig, useReducedMotion } from "motion/react";
 import Link from "next/link";
 import { useEffect, useMemo, useReducer, useRef, useState } from "react";
 import { Desktop } from "@/components/desktop/Desktop";
-import { inputLimit } from "@/components/desktop/TerminalApp";
+import { finePointer } from "@/components/desktop/TerminalApp";
 import { VirtualScreen } from "@/components/desktop/VirtualScreen";
 import { HardwareView, type HardwareHandle } from "@/components/hardware/HardwareView";
 import {
@@ -18,12 +18,9 @@ import {
   type PlayerAction,
 } from "@/lib/xray/engine";
 import { buildPath } from "@/lib/xray/geometry";
-import { CORES_C } from "@/lib/xray/cores/source";
-import { fitInput } from "@/lib/xray/marks/program";
-import { MARKS_C } from "@/lib/xray/marks/source";
 import { programReads } from "@/lib/xray/scenarios";
 import { framesAround } from "@/lib/xray/packets";
-import type { AppId, Detail, MachineState, NodeId, ScenarioRequest, TermLine } from "@/lib/xray/types";
+import type { AppId, Detail, MachineState, NodeId, ScenarioRequest } from "@/lib/xray/types";
 import { Narration } from "./Narration";
 import { PacketPanel } from "./PacketPanel";
 import { PlaybackBar } from "./PlaybackBar";
@@ -51,12 +48,22 @@ const LEFT_BASIS: Record<LayoutMode, string> = {
   machine: "30%",
 };
 
-/** Height kept under the screen on wide screens: the panels' minimum, the gap and the bezel. */
+/**
+ * Height kept under the screen on wide screens: the panels' minimum, the gap
+ * and the bezel. While a trace plays the story gets more of it: the
+ * explanation matters more than the size of the simulated screen.
+ */
 const PANELS_RESERVE: Record<LayoutMode, string> = {
   screen: "230px",
-  split: "230px",
+  split: "300px",
   machine: "382px",
 };
+
+/** In the Screen layout while a trace plays: room for a step's title, where it is, and a few lines of its story. */
+const SCREEN_TRACE_RESERVE = "330px";
+
+/** More height under the screen while a C program runs: its answer bar (84px) and a gap. */
+const ANSWER_BAR = "96px";
 
 function cacheChips(m: MachineState): { label: string; state: string; warm: boolean; hint: string }[] {
   const files = m.pageCache.length;
@@ -108,53 +115,6 @@ function Segmented<T extends string>({
   );
 }
 
-function terminalReply(command: string): TermLine[] {
-  const [name = "", ...args] = command.split(" ");
-  const echo: TermLine = { kind: "prompt", text: command };
-  switch (name) {
-    case "":
-      return [echo];
-    case "help":
-      return [
-        echo,
-        { kind: "output", text: "Traced: cat notes.txt   read a file through VFS, the page cache and the SSD" },
-        { kind: "output", text: "        ./marks        a C program: watch its stack and heap in the Memory tab" },
-        { kind: "output", text: "        ./cores        a C program with threads: watch them run on every core" },
-        { kind: "output", text: "Also:   ls · cat marks.c · cat cores.c · make · clear · help" },
-        { kind: "hint", text: "Other apps trace too: search in Chromium, open notes.txt in the Text Editor, play a sound in Videos." },
-      ];
-    case "ls":
-      return [echo, { kind: "output", text: "Makefile  cores  cores.c  marks  marks.c  notes.txt" }];
-    case "cat": {
-      const file = args.join(" ");
-      const source = file === "marks.c" ? MARKS_C : file === "cores.c" ? CORES_C : null;
-      if (source) {
-        return [
-          echo,
-          ...source.map((text) => ({ kind: "output" as const, text: text.replace(/\t/g, "        ") })),
-          { kind: "hint", text: `Not traced: cat notes.txt is. Run the program with ./${file.slice(0, -2)}.` },
-        ];
-      }
-      return [echo, { kind: "output", text: `cat: ${file || "-"}: No such file or directory` }];
-    }
-    case "make":
-      return [echo, { kind: "output", text: "make: Nothing to be done for 'all'." }];
-    case "marks":
-    case "cores":
-      return [
-        echo,
-        { kind: "output", text: `bash: ${name}: command not found` },
-        { kind: "hint", text: `bash looks for commands in PATH, not in the current directory: type ./${name}` },
-      ];
-    default:
-      return [
-        echo,
-        { kind: "output", text: `bash: ${name}: command not found` },
-        { kind: "hint", text: "Only cat notes.txt, ./marks and ./cores are traced. Type help." },
-      ];
-  }
-}
-
 export function DesktopLab() {
   const reduced = useReducedMotion() ?? false;
   const [state, dispatch] = useReducer(playerReducer, INITIAL_PLAYER);
@@ -163,11 +123,20 @@ export function DesktopLab() {
   const [tab, setTab] = useState<MachineTab>("software");
   const resumeAfterScrub = useRef(false);
   const hardware = useRef<HardwareHandle>(null);
-  /** The first run of ./marks opens the Memory tab; after that the tab is yours to choose. */
-  const shownMemory = useRef(false);
+  /** The first run of a C program opens the Memory tab; after that the tab is yours to choose. */
+  const [shownMemory, setShownMemory] = useState(false);
+  const [seenRun, setSeenRun] = useState(0);
 
   const run = state.run;
   const scenario = run?.scenario ?? null;
+  // A new trace: if it is the first C program to run, show its memory. (A line that waited in the TTY can start one too.)
+  if (run && run.seq !== seenRun) {
+    setSeenRun(run.seq);
+    if (run.scenario.kind === "runProgram" && !shownMemory) {
+      setShownMemory(true);
+      setTab("memory");
+    }
+  }
   const steps = useMemo(
     () => (scenario ? visibleSteps(scenario, state.detail) : []),
     [scenario, state.detail],
@@ -210,6 +179,10 @@ export function DesktopLab() {
       ) {
         return;
       }
+      // Something that scrolls sideways has a use for the arrows itself.
+      if ((e.key === "ArrowLeft" || e.key === "ArrowRight") && target && target.scrollWidth > target.clientWidth + 1) {
+        return;
+      }
       if (e.key === " " && !(target instanceof HTMLButtonElement)) {
         e.preventDefault();
         dispatch({ type: "toggle" });
@@ -231,31 +204,26 @@ export function DesktopLab() {
     dispatch(action);
   }
 
+  /** A line from the terminal or the answer bar: the engine decides who reads it, and when (lib/xray/shell.ts). */
   function handleCommand(raw: string) {
-    // While the program reads, the line goes to it as typed: spaces and all.
-    const program = committedApps(state).program;
-    if (programReads(program)) {
-      request({ kind: "programInput", text: fitInput(raw, inputLimit(program)) });
-      return;
-    }
-    const command = raw.trim().replace(/\s+/g, " ");
-    if (command === "./marks" || command === "./cores") {
-      if (!shownMemory.current) {
-        shownMemory.current = true;
-        setTab("memory");
-      }
-      request({ kind: "runProgram", program: command === "./cores" ? "cores" : "marks" });
-    } else if (command === "cat notes.txt") {
-      request({ kind: "readFile" });
-    } else if (command === "clear") {
-      dispatch({ type: "terminal", clear: true });
-    } else {
-      dispatch({ type: "terminal", append: terminalReply(command) });
-    }
+    start({ type: "command", text: raw });
   }
 
   function request(req: ScenarioRequest) {
     start({ type: "start", request: req });
+  }
+
+  /** Ctrl+C or Ctrl+D, from the terminal or the answer bar. */
+  function handleControl(key: "c" | "d") {
+    start({ type: "control", key });
+  }
+
+  /** To the end of the trace, where the program asks; the answer box takes the keyboard. */
+  function skipToQuestion() {
+    dispatch({ type: "finish" });
+    requestAnimationFrame(() => {
+      if (finePointer()) document.getElementById("program-answer")?.focus({ preventScroll: true });
+    });
   }
 
   /** After a "Try it" button on a phone, bring the story into view (the panel above it shrinks). */
@@ -291,6 +259,11 @@ export function DesktopLab() {
     );
   }
 
+  /** Reading on (More, or a chip that jumps to a sentence) pauses the trace, so the step does not change mid-sentence. */
+  function handleRead() {
+    if (status === "playing") dispatch({ type: "pause" });
+  }
+
   /** Dragging the timeline pauses the trace, and lets it play on when you let go. */
   function handleScrub(scrubbing: boolean) {
     if (scrubbing) {
@@ -322,11 +295,16 @@ export function DesktopLab() {
 
   const tracing: AppId | null = run && status !== "done" ? run.scenario.app : null;
   const active = run !== null && status !== "done";
+  // The C program as it will be when this trace is over: still running, and maybe waiting for a line.
+  const program = committedApps(state).program;
+  const programRuns = program !== null && program.stage !== "exited" && apps.windows.terminal === "open";
+  const toQuestion = active && programReads(program);
   const { current: packet, previous: previousPacket } = framesAround(step?.frames, reached);
   const nextStep = run ? (steps[run.index + 1] ?? null) : null;
   const panelClass = `min-h-[200px] overflow-hidden rounded-xl border border-lab-line bg-lab-panel ${
     layout === "machine" ? "xl:min-h-0" : ""
   }`;
+  const reserve = active && layout === "screen" ? SCREEN_TRACE_RESERVE : PANELS_RESERVE[layout];
 
   return (
     <MotionConfig reducedMotion="user">
@@ -389,7 +367,10 @@ export function DesktopLab() {
           <div
             className={`flex min-h-0 min-w-0 flex-col gap-3 transition-[flex-basis] duration-700 ease-[cubic-bezier(0.2,0.8,0.2,1)] motion-reduce:transition-none xl:shrink-0 xl:basis-(--left) ${styles.column}`}
             style={
-              { "--left": LEFT_BASIS[layout], "--reserve": PANELS_RESERVE[layout] } as React.CSSProperties
+              {
+                "--left": LEFT_BASIS[layout],
+                "--reserve": programRuns ? `calc(${reserve} + ${ANSWER_BAR})` : reserve,
+              } as React.CSSProperties
             }
           >
             <div
@@ -399,6 +380,7 @@ export function DesktopLab() {
                 <Desktop
                   apps={apps}
                   tracing={tracing}
+                  typedAhead={state.typedAhead}
                   locked={{
                     draft: fieldLocked(state, "draft"),
                     editor: fieldLocked(state, "editor"),
@@ -412,6 +394,7 @@ export function DesktopLab() {
                   onSearch={(query) => request({ kind: "search", query })}
                   onDraft={(text) => dispatch({ type: "draft", text })}
                   onCommand={handleCommand}
+                  onControl={handleControl}
                   onOpenFile={() => request({ kind: "openFile" })}
                   onEditorText={(text) => dispatch({ type: "editorText", text })}
                   onKeystroke={handleKeystroke}
@@ -425,19 +408,20 @@ export function DesktopLab() {
             </div>
             <QuickActions
               apps={apps}
+              program={programRuns ? program : null}
+              typedAhead={state.typedAhead}
+              toQuestion={toQuestion}
               playing={active ? (run?.scenario.title ?? null) : null}
               onRequest={request}
               onCommand={handleCommand}
-              onFinish={() => dispatch({ type: "finish" })}
+              onControl={handleControl}
+              onFinish={skipToQuestion}
               onStarted={showStory}
             />
             <div
               className={`grid min-h-0 flex-1 gap-3 ${
-                layout === "machine"
-                  ? packet
-                    ? "xl:grid-cols-1 xl:grid-rows-[minmax(170px,1.3fr)_minmax(170px,1fr)]"
-                    : "xl:grid-cols-1 xl:grid-rows-[minmax(170px,1fr)_auto]"
-                  : "md:grid-cols-2"
+                // Stacked in the Machine layout: the story keeps the larger share, the data panel scrolls.
+                layout === "machine" ? "xl:grid-cols-1 xl:grid-rows-[minmax(190px,1.3fr)_minmax(150px,1fr)]" : "md:grid-cols-2"
               }`}
             >
               <div id="lab-story" className={panelClass}>
@@ -446,13 +430,15 @@ export function DesktopLab() {
                   next={nextStep}
                   position={run ? { index: run.index, total: steps.length } : null}
                   scenarioTitle={run?.scenario.title ?? null}
+                  reached={reached}
                   selected={selected}
                   onCloseInspector={() => setSelected(null)}
                   onShowInHardware={showInHardware}
+                  onRead={handleRead}
                 />
               </div>
               <div className={panelClass}>
-                <PacketPanel packet={packet} previous={previousPacket} />
+                <PacketPanel packet={packet} previous={previousPacket} step={step} onRead={handleRead} />
               </div>
             </div>
           </div>
@@ -517,6 +503,13 @@ export function DesktopLab() {
                     <span className="h-0.5 w-4 rounded bg-signal shadow-[0_0_6px_var(--color-signal)]" />
                     Signal
                   </span>
+                  <span
+                    className="flex cursor-help items-center gap-1.5"
+                    title="Where the kernel meets the hardware. MMIO: the CPU reads and writes a device's registers at memory addresses. DMA: a device copies data to or from RAM by itself. Interrupts: a device tells the CPU that something happened."
+                  >
+                    <span className="h-1.5 w-4 rounded-[1px] bg-gradient-to-b from-[#ffd9a3]/80 to-[#ffb35c]/40" />
+                    Kernel ↔ hardware
+                  </span>
                 </span>
                 <span
                   aria-hidden={tab !== "hardware"}
@@ -556,6 +549,7 @@ export function DesktopLab() {
                 role="tabpanel"
                 aria-labelledby="machine-tab-software"
                 inert={tab !== "software"}
+                data-scroll-x
                 className={`absolute inset-0 overflow-x-auto xl:overflow-hidden ${tab === "software" ? "" : "invisible"}`}
               >
                 <div className="h-full min-w-[680px] px-2 pb-2 xl:min-w-0">
@@ -565,6 +559,7 @@ export function DesktopLab() {
                     geometry={geometry}
                     progress={playhead.progress}
                     reached={reached}
+                    reduced={reduced}
                     selected={selected}
                     scenarioNodes={scenarioNodes}
                     onSelect={handleSelect}
@@ -603,6 +598,7 @@ export function DesktopLab() {
             steps={steps}
             index={run?.index ?? 0}
             status={status}
+            onSkipToQuestion={toQuestion ? skipToQuestion : null}
             speed={state.speed}
             fraction={playhead.fraction}
             onAction={(type) => dispatch({ type })}

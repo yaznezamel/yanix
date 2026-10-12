@@ -8,8 +8,11 @@ import { HEADER, NO_HEAP, PAGE, type Heap } from "./heap";
 // A null value is memory the program has not written: whatever bytes were
 // there before. C does not clear locals, and neither does this model.
 
-/** What the program is doing: running, or blocked in fgets() waiting for a name, marks or y/n. */
-export type Stage = "running" | "name" | "marks" | "again" | "exited";
+/** The signal that ended a program, if one did: its terminal hung up, or Ctrl+C. */
+export type Ending = "hangup" | "interrupt";
+
+/** What the program is doing: not started yet, running, blocked in fgets() waiting for a name, marks or y/n, or gone. */
+export type Stage = "starting" | "running" | "name" | "marks" | "again" | "exited";
 
 /** A function main() called whose frame is on the stack right now. */
 export type Callee =
@@ -57,6 +60,8 @@ export interface ProgramState {
   inbuf: string;
   /** What the step changed, for the memory view to point out (see CHANGE). */
   changed: string[];
+  /** A signal ended it: its terminal hung up (closed while it ran), or Ctrl+C. */
+  endedBy?: Ending;
 }
 
 /**
@@ -89,12 +94,12 @@ export const pageKey = (page: number) => `page:${page}`;
 export const SUBJECTS = 3;
 export const LINE_SIZE = 64;
 
-/** The program just after execve(): no main() yet, no heap. */
+/** The program as bash is about to start it: no process yet; after execve(), no main() and no heap. */
 export function startProgram(run: number): ProgramState {
   return {
     kind: "marks",
     run,
-    stage: "running",
+    stage: "starting",
     at: 0,
     inMain: false,
     callee: null,

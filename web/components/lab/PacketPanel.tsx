@@ -2,13 +2,24 @@
 
 import { AnimatePresence, motion } from "motion/react";
 import { useState } from "react";
-import { packetBytes } from "@/lib/xray/packets";
-import type { Header, Packet } from "@/lib/xray/types";
+import { dataOf, onWire, packetBytes } from "@/lib/xray/packets";
+import type { AwsNote, Header, Packet, Step } from "@/lib/xray/types";
+import { Glossed } from "./glossary";
+import { MoreButton, MoreFade, useMoreCue } from "./moreCue";
 import { HEADER_COLOR, HEADER_TAG } from "./palette";
+
+// The panel beside the story: the data a step moves, and the same idea on
+// AWS. A packet, USB report or disk command in flight shows field by field;
+// otherwise the panel says how much the step moves, worked out from the
+// model. The AWS card follows, when the step has one.
 
 interface PacketPanelProps {
   packet: Packet | null;
   previous: Packet | null;
+  /** The step under way, for what it moves and its AWS note. */
+  step: Step | null;
+  /** Reading on (More) pauses the trace. */
+  onRead: () => void;
 }
 
 const sameHeader = (a: Header, b: Header) => a.kind === b.kind && a.title === b.title;
@@ -55,22 +66,93 @@ function summary(header: Header): string {
   }
 }
 
-export function PacketPanel({ packet, previous }: PacketPanelProps) {
+export function PacketPanel({ packet, previous, step, onRead }: PacketPanelProps) {
+  const { watch, more, scrollDown } = useMoreCue();
+  return (
+    <section aria-label="Data" className="flex h-full min-h-0 flex-col gap-2 p-4">
+      <div className="relative flex min-h-0 flex-1 flex-col">
+        <div ref={watch} className="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto">
+          {packet ? <PacketView packet={packet} previous={previous} /> : <Moved step={step} />}
+          {/* A step with packets shows its AWS note in the story instead, so it never jumps mid-step. */}
+          {step?.aws && (step.frames?.length ?? 0) === 0 && <AwsCard aws={step.aws} />}
+        </div>
+        {more && <MoreFade />}
+      </div>
+      {more && (
+        <div className="flex shrink-0 justify-end">
+          <MoreButton
+            onMore={() => {
+              onRead();
+              scrollDown();
+            }}
+          />
+        </div>
+      )}
+    </section>
+  );
+}
+
+/** A service's name, short enough for a chip: "Amazon SQS long polling" is "SQS long polling". */
+export function shortService(service: string): string {
+  const acronym = service.match(/\(([^)]+)\)$/)?.[1];
+  if (acronym) return acronym;
+  return service.replace(/^(Amazon|AWS)\s+/, "");
+}
+
+/** No packet in flight: how much the step moves, in big type, or that nothing does. */
+function Moved({ step }: { step: Step | null }) {
+  const data = step ? dataOf(step) : null;
+  return (
+    <div className="flex flex-col gap-1.5">
+      <h2 className="font-mono text-[11px] uppercase tracking-[0.14em] text-lab-muted">Data</h2>
+      {data ? (
+        <>
+          <p className="font-mono text-[22px] font-semibold leading-tight text-lab-ink">{data.amount}</p>
+          <p className="text-[13px] leading-snug text-lab-ink/80">
+            <Glossed text={data.what} />
+          </p>
+        </>
+      ) : (
+        <>
+          <p className="text-[13px] leading-snug text-lab-ink/80">Nothing in flight in this step.</p>
+          <p className="text-[12px] leading-snug text-lab-muted">
+            When data moves between layers, it shows up here: packets, USB reports, input events, disk commands.
+          </p>
+        </>
+      )}
+    </div>
+  );
+}
+
+/** The step's idea where it appears on AWS. */
+export function AwsCard({ aws }: { aws: AwsNote }) {
+  return (
+    <div className="rounded-lg border border-[#ff9900]/35 bg-[#ff9900]/[0.06] px-3 py-2.5">
+      <p className="flex flex-wrap items-center gap-2">
+        <span className="font-mono text-[10.5px] uppercase tracking-[0.14em] text-[#ffb547]">On AWS</span>
+        <span className="rounded-full border border-[#ff9900]/40 px-2 py-0.5 text-[11.5px] font-semibold text-[#ffd08a]">
+          {aws.service}
+        </span>
+      </p>
+      <p className="mt-1.5 text-[13px] leading-relaxed text-lab-ink/85">
+        <Glossed text={aws.text} />
+      </p>
+      {aws.source && (
+        <a
+          href={aws.source}
+          target="_blank"
+          rel="noreferrer"
+          className="mt-1 inline-block text-[11.5px] text-[#ffb547] underline decoration-[#ffb547]/40 underline-offset-2 hover:decoration-[#ffb547]"
+        >
+          Source: {new URL(aws.source).hostname} ↗
+        </a>
+      )}
+    </div>
+  );
+}
+
+function PacketView({ packet, previous }: { packet: Packet; previous: Packet | null }) {
   const [showAll, setShowAll] = useState(false);
-
-  if (!packet) {
-    return (
-      <section aria-label="Data" className="flex h-full flex-col gap-1.5 px-4 py-3">
-        <h2 className="font-mono text-[11px] uppercase tracking-[0.14em] text-lab-muted">Data</h2>
-        <p className="text-[13px] leading-snug text-lab-ink/80">Nothing in flight in this step.</p>
-        <p className="text-[12px] leading-snug text-lab-muted">
-          When data moves between layers, it shows up here: packets, USB reports, input events, disk
-          commands.
-        </p>
-      </section>
-    );
-  }
-
   const bytes = packetBytes(packet);
   const isNew = (header: Header) =>
     previous !== null && !previous.headers.some((h) => sameHeader(h, header));
@@ -78,7 +160,7 @@ export function PacketPanel({ packet, previous }: PacketPanelProps) {
   const anyFocus = packet.headers.some((h, i) => isNew(h) || (changes[i]?.size ?? 0) > 0);
 
   return (
-    <section aria-label="Data" className="flex h-full min-h-0 flex-col gap-2.5 p-4">
+    <div className="flex flex-col gap-2.5">
       <div className="flex items-center justify-between gap-3">
         <h2 className="font-mono text-[11px] uppercase tracking-[0.14em] text-lab-muted">
           {packet.label ?? "Packet"}
@@ -86,7 +168,8 @@ export function PacketPanel({ packet, previous }: PacketPanelProps) {
         <div className="flex items-center gap-2">
           {bytes !== null && (
             <span className="font-mono text-[10.5px] text-lab-muted">
-              {bytes} B{packet.headers[0]?.kind === "eth" ? " + 4 B checksum" : ""}
+              {bytes.toLocaleString("en-US")} B
+              {packet.headers[0]?.kind === "eth" ? ` · ${onWire(bytes).toLocaleString("en-US")} B on the wire` : ""}
             </span>
           )}
           <button
@@ -125,7 +208,7 @@ export function PacketPanel({ packet, previous }: PacketPanelProps) {
         </AnimatePresence>
       </div>
 
-      <ol className="flex min-h-0 flex-col gap-1.5 overflow-y-auto pr-1">
+      <ol className="flex flex-col gap-1.5">
         <AnimatePresence initial={false}>
           {packet.headers.map((header, i) => {
             const changed = changes[i] ?? new Set<string>();
@@ -178,6 +261,6 @@ export function PacketPanel({ packet, previous }: PacketPanelProps) {
           })}
         </AnimatePresence>
       </ol>
-    </section>
+    </div>
   );
 }

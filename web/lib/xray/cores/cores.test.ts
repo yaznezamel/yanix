@@ -4,7 +4,7 @@ import { describe, expect, it } from "vitest";
 import { INITIAL_APPS } from "../apps";
 import { INITIAL_PLAYER, currentApps, playerReducer, type PlayerState } from "../engine";
 import { NODE_IDS } from "../nodes";
-import type { AppState, Scenario, ScenarioRequest } from "../types";
+import type { AppState, Scenario, ScenarioRequest, Step } from "../types";
 import { ARRAY_MAP, CORES_LAYOUTS, DESCRIPTOR, STACK_MAP, arrayMapping, stackMapping } from "./layout";
 import {
   CORE_COUNT,
@@ -12,6 +12,7 @@ import {
   mainWakes,
   parseThreads,
   placeThread,
+  scanThreads,
   sliceOf,
   sumOf,
   takeStack,
@@ -60,6 +61,13 @@ describe("the work", () => {
     expect(parseThreads("-1")).toBeNull();
     // strtol saturates, then the cast to int keeps the low 32 bits: 2^32 + 1 is 1.
     expect(parseThreads("4294967297")).toBe(1);
+  });
+
+  it("knows what sscanf() stores and returns when the range check fails", () => {
+    expect(scanThreads("9")).toEqual({ result: 1, threads: 9 });
+    expect(scanThreads("abc")).toEqual({ result: 0, threads: null });
+    // Only white space: an input failure before the first conversion, so EOF.
+    expect(scanThreads("")).toEqual({ result: -1, threads: null });
   });
 });
 
@@ -135,6 +143,16 @@ const scenarios: Scenario[] = [];
   }
 }
 const program = (i: number) => coresOf(currentApps(states[i]!));
+const stepIn = (i: number, id: string): Step => {
+  const step = scenarios[i]!.steps.find((s) => s.id === id);
+  if (!step) throw new Error(`no step ${id} in trace ${i}`);
+  return step;
+};
+const stateAt = (i: number, id: string): CoresState => {
+  const p = stepIn(i, id).ui?.program;
+  if (p?.kind !== "cores") throw new Error(`step ${id} has no ./cores state`);
+  return p;
+};
 const output = (i: number) => currentApps(states[i]!).terminal.lines.filter((l) => l.kind === "output").map((l) => l.text);
 
 describe("a session with ./cores", () => {
@@ -217,6 +235,69 @@ describe("a session with ./cores", () => {
   });
 });
 
+describe("what the Memory tab shows at each step", () => {
+  it("has no process until bash calls execve()", () => {
+    expect(scenarios[0]!.steps.slice(0, 2).map((s) => s.ui?.program?.stage)).toEqual(["starting", "starting"]);
+    expect(stateAt(0, "fork-exec").stage).toBe("running");
+  });
+
+  it("writes slices[0] and ids[0] at the step that tells of them, before clone3()", () => {
+    const p = stateAt(1, "stack-1");
+    expect(p.slices[0]).toEqual({ first: 0, count: 250000, sum: 0, cpu: 0 });
+    expect(p.ids[0]).toEqual({ thread: 1, stack: 0 });
+    expect(p.slices.slice(1)).toEqual([null, null, null]);
+    expect(p.workers.map((w) => w.state)).toEqual(["new"]);
+    expect(p.changed).toEqual(expect.arrayContaining(["slices:0", "ids:0", "stack:0", "thread:1"]));
+    // The tab names the stack after its thread from the moment it is made.
+    expect(p.workers[0]?.stack).toBe(0);
+    expect(stateAt(1, "clone-1").workers[0]?.state).toBe("running");
+  });
+
+  it("marks only the elements a step writes", () => {
+    const rest = stateAt(1, "clone-rest");
+    expect(rest.changed.filter((k) => k.startsWith("slices:"))).toEqual(["slices:1", "slices:2", "slices:3"]);
+    expect(rest.ids.map((id) => id?.thread)).toEqual([1, 2, 3, 4]);
+    const exit = stateAt(1, "exit-1");
+    expect(exit.changed.filter((k) => k.startsWith("slices:"))).toEqual(["slices:0"]);
+    expect(exit.slices[0]).toEqual({ first: 0, count: 250000, sum: 12499050, cpu: 1 });
+    expect(exit.slices[1]?.sum).toBe(0);
+    expect(stateAt(1, "joins").changed.filter((k) => k.startsWith("slices:"))).toEqual(["slices:1", "slices:2"]);
+    expect(stateAt(1, "join").total).toBe(0);
+  });
+
+  it("rings the cores whose occupant changes", () => {
+    // main() sleeps in pthread_join(): thread 4, queued on core 0, gets it.
+    expect(stateAt(1, "join").changed).toEqual(expect.arrayContaining(["cores", "core:0"]));
+    expect(stateAt(1, "join").changed).not.toContain("core:1");
+    // Thread 1 exits on core 1, and main() wakes up there.
+    expect(stateAt(1, "exit-1").cores[1]).toEqual({ running: "main", queued: null });
+    expect(stateAt(1, "exit-1").changed).toContain("core:1");
+    expect(stateAt(1, "add").changed.some((k) => k.startsWith("core:"))).toBe(false);
+  });
+
+  it("keeps what an earlier round left, until this round writes it", () => {
+    const start = stateAt(2, "sscanf");
+    expect(start.stale).toEqual(["total", "slices:0", "slices:1", "slices:2", "slices:3", "ids:0", "ids:1", "ids:2", "ids:3"]);
+    expect(start.slices[3]?.sum).toBe(12500925);
+    expect(start.total).toBe(49999950);
+    expect(stateAt(2, "stack-1").stale).not.toContain("slices:0");
+    expect(stateAt(2, "join").stale).not.toContain("total");
+    // One thread this round: slices[1] to [3] still hold the 4-thread round's values.
+    const end = program(2);
+    expect(end.stale).toEqual(["slices:1", "slices:2", "slices:3", "ids:1", "ids:2", "ids:3"]);
+    expect(end.slices[1]).toEqual({ first: 250000, count: 250000, sum: 12499675, cpu: 2 });
+  });
+
+  it("stores an out-of-range number in threads, and leaves threads alone when there is none", () => {
+    expect(stateAt(3, "sscanf").threads).toBe(1);
+    let state: PlayerState = { ...INITIAL_PLAYER, apps: withTerminal };
+    state = play(state, { kind: "runProgram", program: "cores" });
+    state = play(state, { kind: "programInput", text: "9" });
+    const p = coresOf(currentApps(state));
+    expect([p.threads, p.stage]).toEqual([9, "threads"]);
+  });
+});
+
 describe("both programs in one terminal", () => {
   it("switches from ./marks to ./cores, and ./cores dies with its terminal", () => {
     let state: PlayerState = { ...INITIAL_PLAYER, apps: withTerminal };
@@ -235,6 +316,13 @@ describe("both programs in one terminal", () => {
     expect([cores.run, cores.stage]).toEqual([0, "threads"]);
 
     const closed = playerReducer(play(state, { kind: "programInput", text: "2" }), { type: "closeApp", app: "terminal" });
-    expect(currentApps(closed).program).toBeNull();
+    // The Memory tab keeps its last state, and says that the terminal hung up.
+    expect(currentApps(closed).program).toMatchObject({ kind: "cores", stage: "exited", endedBy: "hangup" });
+    // A program bash had not started yet just never runs.
+    const early = playerReducer(playerReducer(state, { type: "start", request: { kind: "runProgram", program: "marks" } }), {
+      type: "closeApp",
+      app: "terminal",
+    });
+    expect(currentApps(early).program).toBeNull();
   });
 });

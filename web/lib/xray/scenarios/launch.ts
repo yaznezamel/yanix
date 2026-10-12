@@ -75,6 +75,11 @@ export function launch(app: AppId, m: MachineState): Scenario {
         { project: "glibc", path: "sysdeps/unix/sysv/linux/spawni.c", symbol: "__spawni" },
       ],
       timescale: "us",
+      data: { amount: "0 pages copied", what: "the child gets a copy of the parent's open files and memory map, not of its memory" },
+      aws: {
+        service: "Amazon EC2",
+        text: "clone() is the EC2 console's \"Launch more like this\": a new instance set up like the one you started from, before anything runs on it. What it then runs is execve()'s choice, as it is the AMI's.",
+      },
     },
     {
       id: "cow",
@@ -87,6 +92,11 @@ export function launch(app: AppId, m: MachineState): Scenario {
         { project: "linux", path: "mm/memory.c", symbol: "copy_page_range" },
       ],
       timescale: "us",
+      data: { amount: "0 bytes copied", what: "parent and child share every page read-only; a 4 KiB page is copied only when one of them writes to it" },
+      aws: {
+        service: "Amazon EBS snapshots",
+        text: "EBS snapshots are incremental: a new snapshot shares every unchanged block with the one before and stores only what changed. Copy-on-write memory works the same way: parent and child share every page until one of them writes.",
+      },
     },
     {
       id: "runqueue",
@@ -97,6 +107,10 @@ export function launch(app: AppId, m: MachineState): Scenario {
       body: "wake_up_new_task() puts the new task on a run queue, and the scheduler soon gives it a CPU core.",
       code: [{ project: "linux", path: "kernel/sched/core.c", symbol: "wake_up_new_task" }],
       timescale: "us",
+      aws: {
+        service: "Amazon ECS",
+        text: "Placing a new task on a core is ECS task placement in miniature: ECS applies a strategy (spread, binpack, random) to pick the instance for a new task; the Linux scheduler picks a CPU, preferring an idle one.",
+      },
     },
     {
       id: "execve",
@@ -110,6 +124,10 @@ export function launch(app: AppId, m: MachineState): Scenario {
         { project: "linux", path: "fs/binfmt_elf.c", symbol: "load_elf_binary" },
       ],
       timescale: "us",
+      aws: {
+        service: "Amazon EC2",
+        text: "execve() is RunInstances with an AMI: the image says how to lay the machine out (the ELF program headers, like an AMI's block device mappings), and the kernel builds a fresh one from it.",
+      },
     },
     {
       id: "map",
@@ -123,6 +141,11 @@ export function launch(app: AppId, m: MachineState): Scenario {
         { project: "linux", path: "mm/mmap.c", symbol: "do_mmap" },
       ],
       timescale: "us",
+      data: { amount: "0 bytes read", what: "the code and data are mapped from the file; their pages arrive on first touch" },
+      aws: {
+        service: "Amazon EBS",
+        text: "Mapping is not loading, as attaching a volume restored from a snapshot is not downloading it: both are usable at once, and each page, or block, is fetched the first time it is touched.",
+      },
     },
     {
       id: "interp",
@@ -148,6 +171,11 @@ export function launch(app: AppId, m: MachineState): Scenario {
         { project: "glibc", path: "elf/dl-cache.c", symbol: "_dl_load_cache_lookup" },
       ],
       timescale: "us",
+      data: { amount: `${libraries.length}+ libraries`, what: "mapped, not copied: their code pages in the page cache are shared by every process that uses them" },
+      aws: {
+        service: "AWS Lambda layers",
+        text: "A library is published once and used by many programs, as a Lambda layer is published once and attached to many functions. Here even the RAM is shared: one copy of each library's code for every process.",
+      },
     },
     {
       id: "relocate",
@@ -160,6 +188,11 @@ export function launch(app: AppId, m: MachineState): Scenario {
         { project: "glibc", path: "csu/libc-start.c", symbol: "__libc_start_main" },
       ],
       timescale: "us",
+      data: { amount: "8 bytes per entry", what: "each GOT entry the linker fills is a 64-bit address; then the table is made read-only (RELRO)" },
+      aws: {
+        service: "AWS Cloud Map",
+        text: "Relocation is service discovery for code: the program asks for printf() by name, and ld.so fills in where it landed this run, as Cloud Map resolves a service's name to the addresses its instances have now.",
+      },
     },
     {
       id: "page-faults",
@@ -179,6 +212,15 @@ export function launch(app: AppId, m: MachineState): Scenario {
         { project: "linux", path: "mm/filemap.c", symbol: "filemap_fault" },
       ],
       timescale: "us",
+      data: cached
+        ? { amount: "4 KiB per fault", what: "minor faults: each maps a page that is already in the page cache, with no disk" }
+        : { amount: "4 KiB per fault", what: "major faults: each waits for the SSD to read the page, then maps it" },
+      aws: {
+        service: "Amazon EBS",
+        text: cached
+          ? "Minor faults are reads of an EBS volume whose blocks are already initialized: no extra trip, full speed. This launch pays almost nothing for the program's code."
+          : "Major faults are the first read of each block of a volume restored from a snapshot: slow once, fast after. That is why a first launch is slow and a second one is quick.",
+      },
     },
     {
       id: "tlb",
@@ -189,6 +231,11 @@ export function launch(app: AppId, m: MachineState): Scenario {
       body: "The kernel writes each new mapping into the process's page tables: four levels on most x86-64 machines, five on some. The CPU's memory management unit walks them in hardware and keeps recent translations in the TLB, so later accesses to the page need no kernel at all.",
       code: [{ project: "linux", path: "arch/x86/mm/fault.c", symbol: "do_user_addr_fault" }],
       timescale: "ns",
+      data: { amount: "4 levels", what: "of page tables, each a 4 KiB page of 512 entries of 8 bytes; the TLB caches the translations it walks" },
+      aws: {
+        service: "Amazon Route 53 Resolver",
+        text: "The TLB is a cache of lookups, as a resolver's cache is: the full walk (four tables, like a DNS query from the root down) happens once, and the answer is reused until it changes.",
+      },
     },
     ...appSpecific(app),
     {

@@ -1,5 +1,6 @@
 import { CLOSED_WINDOWS, COLD_MACHINE, FRESH_APPS, INITIAL_APPS } from "./apps";
 import { applyTrigger, buildScenario, machineAfter } from "./scenarios";
+import { EOT, command } from "./shell";
 import type {
   AppId,
   AppState,
@@ -45,6 +46,12 @@ export interface PlayerState {
   detail: Detail;
   speed: Speed;
   seq: number;
+  /**
+   * Lines typed into the terminal while its trace plays. Like typed-ahead
+   * input in a real TTY they wait, and are read one at a time once the trace
+   * is over: by the program if it waits for a line, else by bash.
+   */
+  typedAhead: string[];
 }
 
 export const INITIAL_PLAYER: PlayerState = {
@@ -54,6 +61,7 @@ export const INITIAL_PLAYER: PlayerState = {
   detail: "overview",
   speed: 1,
   seq: 0,
+  typedAhead: [],
 };
 
 export type PlayerAction =
@@ -74,6 +82,10 @@ export type PlayerAction =
   | { type: "closeApp"; app: AppId }
   | { type: "window"; id: WindowId; status: WindowStatus }
   | { type: "terminal"; append?: TermLine[]; clear?: boolean }
+  /** A line typed into the terminal and sent with Enter. */
+  | { type: "command"; text: string }
+  /** Ctrl+C or Ctrl+D typed into the terminal. */
+  | { type: "control"; key: "c" | "d" }
   | { type: "draft"; text: string }
   | { type: "editorText"; text: string }
   | { type: "media"; patch: Partial<MediaState> }
@@ -235,8 +247,11 @@ function editApps(state: PlayerState, field: UserField, fn: (apps: AppState) => 
   return mutateApps(state, fn);
 }
 
-/** The app quits: its window closes, its state resets, and any clipboard it owned is gone. */
-function closeApp(apps: AppState, app: AppId): AppState {
+/**
+ * The app quits: its window closes, its state resets, and any clipboard it
+ * owned is gone. `program` is the C program as it was on screen then.
+ */
+function closeApp(apps: AppState, app: AppId, program = apps.program): AppState {
   const next: AppState = {
     ...apps,
     windows: { ...apps.windows, [app]: "closed" },
@@ -245,9 +260,16 @@ function closeApp(apps: AppState, app: AppId): AppState {
   switch (app) {
     case "browser":
       return { ...next, browser: FRESH_APPS.browser };
-    case "terminal":
-      // Closing the terminal hangs up its pseudo-terminal, and a program running in it dies.
-      return { ...next, terminal: FRESH_APPS.terminal, program: null };
+    case "terminal": {
+      // Closing the terminal hangs up its pseudo-terminal, and a program running in it ends:
+      // the Memory tab keeps its last state and says why.
+      const running = program !== null && program.stage !== "starting" && program.stage !== "exited";
+      return {
+        ...next,
+        terminal: FRESH_APPS.terminal,
+        program: running ? { ...program, stage: "exited", endedBy: "hangup", changed: [] } : null,
+      };
+    }
     case "editor":
       return { ...next, editor: FRESH_APPS.editor };
     case "player":
@@ -256,29 +278,68 @@ function closeApp(apps: AppState, app: AppId): AppState {
 }
 
 export function playerReducer(state: PlayerState, action: PlayerAction): PlayerState {
+  return settle(reduce(state, action));
+}
+
+/** A trace starts from these apps and this machine; the scenario's steps decide what it learns. */
+function begin(state: PlayerState, request: ScenarioRequest, apps: AppState, machine: MachineState): PlayerState {
+  const scenario = buildScenario(request, machine, apps);
+  const seq = state.seq + 1;
+  return {
+    ...state,
+    seq,
+    apps,
+    machine: machineAfter(scenario, machine),
+    run: {
+      seq,
+      replay: 0,
+      scenario,
+      index: 0,
+      status: "playing",
+      base: applyTrigger(request, apps),
+      before: machine,
+    },
+  };
+}
+
+/** bash prints at once, below what the last trace printed: that trace is over. */
+function print(state: PlayerState, action: PlayerAction & { type: "terminal" }): PlayerState {
+  const run = state.run;
+  const settled = run && run.status === "done" ? { ...state, apps: committed(state), run: null } : state;
+  return reduce(settled, action);
+}
+
+/**
+ * Ctrl+C. The line discipline sends SIGINT at once, so a program's trace is
+ * cut where the playhead is and the interrupt starts from there; the line
+ * typed so far, and any waiting ones, are thrown away. At bash's prompt the
+ * TTY echoes ^C and bash prints a new prompt.
+ */
+function interrupt(state: PlayerState): PlayerState {
+  const run = state.run;
+  const cut = run !== null && run.status !== "done" && run.scenario.app === "terminal";
+  const apps = cut ? currentApps(state) : committed(state);
+  const program = apps.program;
+  const runs = program !== null && program.stage !== "starting" && program.stage !== "exited";
+  if (!runs) return cut ? state : print(state, { type: "terminal", append: [{ kind: "prompt", text: "^C" }] });
+  return begin({ ...state, typedAhead: [] }, { kind: "interrupt" }, apps, cut ? machineAt(state) : state.machine);
+}
+
+/** Once nothing plays, the next line that waited in the TTY is read. */
+function settle(state: PlayerState): PlayerState {
+  const [line, ...rest] = state.typedAhead;
+  if (line === undefined || (state.run && state.run.status !== "done")) return state;
+  return playerReducer({ ...state, typedAhead: rest }, { type: "command", text: line });
+}
+
+function reduce(state: PlayerState, action: PlayerAction): PlayerState {
   const run = state.run;
   switch (action.type) {
     case "start": {
       const apps = committed(state);
       // An app that is already starting or open isn't launched again.
       if (action.request.kind === "launch" && apps.windows[action.request.app] !== "closed") return state;
-      const scenario = buildScenario(action.request, state.machine, apps);
-      const seq = state.seq + 1;
-      return {
-        ...state,
-        seq,
-        apps,
-        machine: machineAfter(scenario, state.machine),
-        run: {
-          seq,
-          replay: 0,
-          scenario,
-          index: 0,
-          status: "playing",
-          base: applyTrigger(action.request, apps),
-          before: state.machine,
-        },
-      };
+      return begin(state, action.request, apps, state.machine);
     }
     case "play":
       if (!run) return state;
@@ -340,10 +401,13 @@ export function playerReducer(state: PlayerState, action: PlayerAction): PlayerS
     case "closeApp": {
       const machine =
         action.app === "browser" ? { ...state.machine, connectionOpen: false } : state.machine;
+      // Closing the terminal throws away what was typed into it.
+      const typedAhead = action.app === "terminal" ? [] : state.typedAhead;
       if (run && run.scenario.app === action.app) {
-        return { ...state, machine, run: null, apps: closeApp(committed(state), action.app) };
+        const apps = closeApp(committed(state), action.app, currentApps(state).program);
+        return { ...state, machine, typedAhead, run: null, apps };
       }
-      const next = mutateApps({ ...state, machine }, (apps) => closeApp(apps, action.app));
+      const next = mutateApps({ ...state, machine, typedAhead }, (apps) => closeApp(apps, action.app));
       return next.run && action.app === "browser"
         ? { ...next, run: { ...next.run, before: { ...next.run.before, connectionOpen: false } } }
         : next;
@@ -359,6 +423,20 @@ export function playerReducer(state: PlayerState, action: PlayerAction): PlayerS
       return editApps(state, "editor", (apps) => ({ ...apps, editor: { ...apps.editor, text: action.text } }));
     case "media":
       return editApps(state, "player", (apps) => ({ ...apps, player: { ...apps.player, ...action.patch } }));
+    case "command": {
+      // Typed while the terminal's trace plays: the line waits in the TTY until the trace is over.
+      if (run && run.status !== "done" && run.scenario.app === "terminal") {
+        return { ...state, typedAhead: [...state.typedAhead, action.text] };
+      }
+      const effect = command(action.text, committed(state));
+      if (effect.kind === "trace") return reduce(state, { type: "start", request: effect.request });
+      return effect.kind === "clear"
+        ? print(state, { type: "terminal", clear: true })
+        : print(state, { type: "terminal", append: effect.lines });
+    }
+    case "control":
+      // Ctrl+D is a byte like any other: it waits with typed-ahead lines. Ctrl+C acts at once.
+      return action.key === "d" ? reduce(state, { type: "command", text: EOT }) : interrupt(state);
     case "terminal":
       return mutateApps(state, (apps) => ({
         ...apps,
@@ -372,10 +450,11 @@ export function playerReducer(state: PlayerState, action: PlayerAction): PlayerS
   }
 }
 
-// Timing. Travel time grows with the number of hops; reading time with the
-// length of the text, at about 240 words a minute (a careful pace for
-// technical text), so a student can read each step before the next one.
-// Both scale with the chosen speed.
+// Timing. Travel time grows with the number of hops, about two thirds of a
+// second each, so every numbered stop on the map lights in turn; reading time
+// grows with the length of the text, at about 240 words a minute (a careful
+// pace for technical text), so a student can read each step before the next
+// one. Both scale with the chosen speed.
 
 const READ_MS_PER_WORD = 250;
 const READ_BASE_MS = 1200;
@@ -385,11 +464,13 @@ const READ_MAX_MS = 22000;
 export function travelMs(step: Step, speed: Speed): number {
   const hops = step.path.length - 1;
   if (hops <= 0) return 0;
-  return Math.min(3000, 240 + hops * 300) / speed;
+  return Math.min(6000, 200 + hops * 650) / speed;
 }
 
 export function readMs(step: Step, speed: Speed): number {
-  const words = `${step.title} ${step.body}`.split(/\s+/).length;
+  // The AWS note and the data line are read too.
+  const text = [step.title, step.body, step.data?.what, step.aws?.text].filter(Boolean).join(" ");
+  const words = text.split(/\s+/).filter(Boolean).length;
   return Math.min(READ_MAX_MS, Math.max(READ_MIN_MS, READ_BASE_MS + words * READ_MS_PER_WORD)) / speed;
 }
 

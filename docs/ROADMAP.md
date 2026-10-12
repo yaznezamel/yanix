@@ -52,6 +52,11 @@ measurements of the real program (ADR 0006). Then `./cores`
 threads on four cores: stacks, `clone3()`, futexes and the hardware view's
 cores working at once, with a simple scheduler model (ADR 0007).
 
+Then, also at my request: each step's route numbered on the software map,
+software drawn as glass over the hardware, and for each step the data it moves
+and, where it fits, the same idea on AWS, with a source for every figure
+(ADR 0008).
+
 Tasks to make it mine, any time after phase 1 starts:
 
 - [ ] **L.1 Read the engine.** Walk through `engine.ts` and its tests, and
@@ -101,6 +106,15 @@ Tasks to make it mine, any time after phase 1 starts:
   "CFS Scheduler" and "EEVDF Scheduler" documents.
   *Done when:* you can explain one difference between the model and a real run,
   and add a test for a case of your choice to `cores.test.ts`.
+- [ ] **L.9 Check a figure.** Measure your own browser's TLS ClientHello the
+  way ADR 0008 did (`openssl s_server -msg`, or Wireshark), compare it with
+  the 1,541 bytes the lab shows, and explain the difference. Then pick one AWS
+  note with a number in it and find the number in AWS's documentation.
+  *Concepts:* TLS records and handshake messages, key shares, GREASE; why a
+  figure needs a source (NFR9).
+  *Docs:* RFC 8446 sections 4.1.2 and 5.1; `man s_server`.
+  *Done when:* you can account for every byte of difference, or say which
+  extension causes it.
 
 ### Hardware view (in progress, see ADR 0004)
 

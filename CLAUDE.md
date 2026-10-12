@@ -39,6 +39,10 @@ as they finish.
   Then `./cores` (`examples/cores/`), threads on all four cores with a simple
   scheduler model (ADR 0007). Both built by the assistant at my request; study
   tasks L.7 and L.8 in the roadmap.
+- Also done, ahead of the roadmap: numbered routes on the software map,
+  software drawn as glass over the hardware, and each step's data amount and
+  AWS comparison, every figure sourced (ADR 0008). Built by the assistant at
+  my request; study task L.9 in the roadmap.
 - In progress, ahead of the roadmap: a zoomable hardware view in the lab
   (ADR 0004, ADR 0005), in five phases (H.1 to H.5 in the roadmap), each
   built by the assistant at my request and reviewed by me before the next.

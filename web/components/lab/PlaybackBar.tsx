@@ -11,6 +11,8 @@ interface PlaybackBarProps {
   steps: Step[];
   index: number;
   status: RunStatus | null;
+  /** The trace ends with a program asking for a line: jump to its question. */
+  onSkipToQuestion: (() => void) | null;
   speed: Speed;
   /** How far through the current step the shared playhead is, from 0 to 1. */
   fraction: MotionValue<number>;
@@ -75,6 +77,7 @@ export function PlaybackBar({
   steps,
   index,
   status,
+  onSkipToQuestion,
   speed,
   fraction,
   onAction,
@@ -129,6 +132,15 @@ export function PlaybackBar({
             <path d="m2 3 5 5-5 5zm6 0 5 5-5 5z" fill="currentColor" />
           </svg>
         </IconButton>
+        {onSkipToQuestion && (
+          <button
+            type="button"
+            onClick={onSkipToQuestion}
+            className="h-9 whitespace-nowrap rounded-md border border-signal/60 bg-signal/10 px-3 text-[12.5px] font-medium text-signal hover:bg-signal/20"
+          >
+            Skip to the question
+          </button>
+        )}
       </div>
 
       <div className="flex items-center gap-1 rounded-md border border-lab-line bg-lab-panel2 p-0.5" role="group" aria-label="Speed">

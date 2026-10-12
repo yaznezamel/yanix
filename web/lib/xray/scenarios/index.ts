@@ -1,12 +1,12 @@
 import { NOTES_FILE } from "../apps";
 import { searchUrl } from "../packets";
-import type { AppState, MachineState, Program, Scenario, ScenarioRequest } from "../types";
+import type { AppState, MachineState, Program, Scenario, ScenarioRequest, TermLine } from "../types";
 import { copy, paste } from "./clipboard";
 import { openFile, readFile } from "./files";
 import { keystroke } from "./keyboard";
-import { coresInput, runCores } from "./cores";
+import { coresEof, coresInput, coresInterrupt, runCores } from "./cores";
 import { launch } from "./launch";
-import { marksInput, runMarks } from "./marks";
+import { marksEof, marksInput, marksInterrupt, runMarks } from "./marks";
 import { play } from "./media";
 import { boot, login, restart, shutdown } from "./power";
 import { webSearch } from "./web";
@@ -48,6 +48,10 @@ export function buildScenario(request: ScenarioRequest, machine: MachineState, a
       return request.program === "cores" ? runCores(apps) : runMarks(apps);
     case "programInput":
       return programInput(apps, request.text);
+    case "programEof":
+      return programEof(apps);
+    case "interrupt":
+      return interrupt(apps);
   }
 }
 
@@ -83,12 +87,36 @@ function programInput(apps: AppState, text: string): Scenario {
   };
 }
 
+/** Ctrl+D while the program reads: the end of its input. */
+function programEof(apps: AppState): Scenario {
+  const program = apps.program;
+  if (program && programReads(program)) return program.kind === "marks" ? marksEof(program) : coresEof(program);
+  return programInput(apps, "");
+}
+
+/** Ctrl+C while a program runs: SIGINT. The engine starts this only when one does. */
+function interrupt(apps: AppState): Scenario {
+  const program = apps.program;
+  if (!program) throw new Error("Ctrl+C with no program to interrupt");
+  return program.kind === "marks" ? marksInterrupt(program) : coresInterrupt(program);
+}
+
 /** What the machine remembers once the scenario has run: everything its steps learned. */
 export function machineAfter(scenario: Scenario, machine: MachineState): MachineState {
   return scenario.steps.reduce<MachineState>(
     (known, step) => (step.learns ? { ...known, ...step.learns } : known),
     machine,
   );
+}
+
+/** The answer to the program's question, on its line; or a line of its own when it has not asked. */
+function echo(lines: TermLine[], text: string): TermLine[] {
+  const next = [...lines];
+  const last = next.length - 1;
+  const ask = next[last];
+  if (ask?.kind === "ask" && ask.answer === undefined) next[last] = { ...ask, answer: text };
+  else if (text !== "") next.push({ kind: "output", text });
+  return next;
 }
 
 /** What changes on screen the moment the user acts, before any step plays. */
@@ -124,15 +152,15 @@ export function applyTrigger(request: ScenarioRequest, apps: AppState): AppState
         ...apps,
         terminal: { lines: [...apps.terminal.lines, { kind: "prompt", text: `./${request.program}` }], busy: true },
       };
-    case "programInput": {
+    case "programInput":
       // The TTY echoes what you type as you type it: it is on screen before the program reads it.
-      const lines = [...apps.terminal.lines];
-      const last = lines.length - 1;
-      const ask = lines[last];
-      if (ask?.kind === "ask" && ask.answer === undefined) lines[last] = { ...ask, answer: request.text };
-      else lines.push({ kind: "output", text: request.text });
-      return { ...apps, terminal: { lines, busy: true } };
-    }
+      return { ...apps, terminal: { lines: echo(apps.terminal.lines, request.text), busy: true } };
+    case "programEof":
+      // VEOF is not echoed: nothing appears.
+      return { ...apps, terminal: { lines: echo(apps.terminal.lines, ""), busy: true } };
+    case "interrupt":
+      // With ECHOCTL set the TTY echoes the interrupt character as ^C.
+      return { ...apps, terminal: { lines: echo(apps.terminal.lines, "^C"), busy: true } };
     case "launch":
       return { ...apps, windows: { ...apps.windows, [request.app]: "starting" } };
     case "play":
