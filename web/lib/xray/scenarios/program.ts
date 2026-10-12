@@ -285,7 +285,8 @@ export function typedSteps<S extends Program>(t: Tracer<S>, typed: string, line:
       timescale: "us",
       aws: {
         service: "Amazon SQS long polling",
-        text: "This is how a long-polling SQS consumer feels: ReceiveMessage with WaitTimeSeconds (up to 20 seconds) returns the moment a message arrives, instead of the consumer asking again and again. read() sleeps in the kernel the same way, and the newline is the message arriving.",
+        text: "This is how a long-polling SQS consumer feels: ReceiveMessage, told to wait up to 20 seconds (WaitTimeSeconds), returns the moment a message arrives, instead of the consumer asking again and again. read() sleeps in the kernel the same way, and the newline is the message arriving.",
+        source: "https://docs.aws.amazon.com/AWSSimpleQueueService/latest/SQSDeveloperGuide/best-practices-setting-up-long-polling.html",
       },
     },
     { ...waking, ...shared<S>({ stage: "running", at: line }) },
@@ -333,7 +334,7 @@ export function promptStep<S extends Program>(t: Tracer<S>, id: string, text: st
       data: { amount: plural(byteLength(text), "byte"), what: "into stdout's buffer, in the program's own memory: no system call yet" },
       aws: {
         service: "Amazon Data Firehose",
-        text: "stdout buffers like a Firehose stream: Firehose collects records and delivers them in batches, when its buffer reaches a size or an interval ends. On a terminal, stdout sends its bytes at a newline, or when the program is about to wait for input.",
+        text: "stdout buffers like an Amazon Data Firehose stream, a service that collects streaming records and delivers them in batches, when its buffer reaches a size or an interval ends. On a terminal, stdout sends its bytes at a newline, or when the program is about to wait for input.",
       },
     },
     shared({ out: t.state.out + text, at: line }),
@@ -535,6 +536,7 @@ export function interruptSteps<S extends Program>(t: Tracer<S>, o: Interrupted):
       aws: {
         service: "Amazon ECS",
         text: "Stopping an ECS task works through signals too: ECS sends SIGTERM to each container's main process, then SIGKILL if it is still running after the stop timeout (30 seconds by default). Ctrl+C sends SIGINT, which a program can also catch, or not.",
+        source: "https://docs.aws.amazon.com/AmazonECS/latest/APIReference/API_StopTask.html",
       },
     },
     shared({ at: o.line }),

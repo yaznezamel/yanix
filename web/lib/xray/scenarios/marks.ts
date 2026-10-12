@@ -272,7 +272,7 @@ function runSteps(t: Tracer): void {
       data: { amount: `${tcache.grew / 1024} KiB`, what: `of address space for the heap (${hex(tcache.grew)} bytes), and no RAM behind it yet` },
       aws: {
         service: "Amazon EC2 Auto Scaling",
-        text: "glibc asks for 132 KiB to serve its first allocation of 656 bytes, so the next ones need no system call: a target tracking policy keeps spare capacity for the same reason, so the next burst of load does not wait for a new instance to boot.",
+        text: "glibc asks for 132 KiB to serve its first allocation of 656 bytes, so the next ones need no system call: an Auto Scaling policy that holds a metric at a target, say 50% CPU (target tracking), keeps spare capacity for the same reason, so the next burst of load does not wait for a new instance to boot.",
       },
     },
     { heap: { ...t.state.heap, size: tcache.grew }, at: LINE.promptName },

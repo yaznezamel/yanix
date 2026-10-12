@@ -54,7 +54,7 @@ export function keystroke(app: "browser" | "editor", key: string): Scenario {
       },
       aws: {
         service: "AWS Lambda and Amazon SQS",
-        text: "A keyboard can't push, so the host asks on a schedule. Lambda reads an SQS queue the same way: its event source mapping polls the queue for you and invokes your function only when messages are there, as the controller interrupts the CPU only when there is a report.",
+        text: "A keyboard can't push, so the host asks on a schedule. Lambda reads an SQS queue the same way: a poller AWS runs for you (an event source mapping) checks the queue and invokes your function only when messages are there, as the controller interrupts the CPU only when there is a report.",
       },
     },
     {
@@ -173,7 +173,7 @@ export function keystroke(app: "browser" | "editor", key: string): Scenario {
       timescale: "us",
       aws: {
         service: "Amazon S3 event notifications",
-        text: "The event carries a key code, not a letter, and each app looks up what it means in the keymap it got when it connected. An S3 event notification works the same way: it names the bucket and the object's key, and the receiver fetches the object only if it needs it.",
+        text: "The event carries a key code, not a letter, and each app looks up what it means in the keymap it got when it connected. An S3 event notification works the same way: it says which object changed, not what is in it, and the receiver fetches the object only if it needs it.",
       },
     },
     app === "browser"

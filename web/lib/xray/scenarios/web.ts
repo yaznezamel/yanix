@@ -84,18 +84,20 @@ const DNS_A = "DNS answer: www.example.com is 203.0.113.10";
 const AWS_DNS_QUOTA: AwsNote = {
   service: "Amazon Route 53 Resolver",
   text: "On EC2 this query would go to the Route 53 Resolver, and each network interface may send it at most 1,024 packets per second, a quota that can't be raised. Every lookup here costs two packets, A and AAAA, which is why busy instances run a local DNS cache in front of it.",
+  source: "https://docs.aws.amazon.com/vpc/latest/userguide/amazon-vpc-limits.html",
 };
 const AWS_ENA_TX: AwsNote = {
   service: "Elastic Network Adapter (ENA)",
-  text: "On current EC2 instances the network card is the Elastic Network Adapter, a Nitro card. Its driver in this same kernel, drivers/net/ethernet/amazon/ena, fills transmit rings the same way: descriptors in RAM, then a doorbell write that tells the card there is work.",
+  text: "On current EC2 instances the network card is the Elastic Network Adapter, one of the cards of AWS's own Nitro hardware. Its driver in this same kernel, drivers/net/ethernet/amazon/ena, fills transmit rings the same way: descriptors in RAM, then a doorbell write that tells the card there is work.",
 };
 const AWS_ENA_RX: AwsNote = {
   service: "Elastic Network Adapter (ENA)",
-  text: "An ENA card has several queue pairs, each with its own MSI-X interrupt, and receive-side scaling hashes each connection to one queue. Different vCPUs can then handle different connections at the same time.",
+  text: "An ENA card has several queue pairs (a send ring and a receive ring each), each with its own MSI-X interrupt, and receive-side scaling hashes each connection to one queue. Different vCPUs can then handle different connections at the same time.",
 };
 const AWS_FLOW_LOGS: AwsNote = {
   service: "Amazon VPC Flow Logs",
   text: "In a VPC, flow logs record connections like this one: addresses, ports, packets, bytes, and whether security groups and network ACLs accepted or rejected them. Their tcp-flags field is a bitmask of the flags seen: 2 for this SYN, 18 for the SYN-ACK that answers it.",
+  source: "https://docs.aws.amazon.com/vpc/latest/userguide/flow-logs-records-examples.html",
 };
 
 // ---------------------------------------------------------------- search
@@ -123,6 +125,7 @@ function dnsSteps(m: MachineState): Step[] {
       aws: {
         service: "Amazon Route 53 Resolver",
         text: "On an EC2 instance, DHCP names a different DNS server: the Route 53 Resolver, at the VPC's base address plus two (10.0.0.2 in a 10.0.0.0/16 VPC), and also at 169.254.169.253.",
+        source: "https://docs.aws.amazon.com/vpc/latest/userguide/AmazonDNS-concepts.html",
       },
       ui: { browser: { status: "Resolving host…", progress: 0.1 } },
     },
@@ -168,6 +171,15 @@ function dnsSteps(m: MachineState): Step[] {
       { project: "linux", path: "net/core/dev.c", symbol: "__dev_queue_xmit" },
     ],
     timescale: "us",
+    data: m.arpCached
+      ? {
+          amount: "2 × 79 bytes",
+          what: "two queries on the wire, A and AAAA: each a 33-byte question in UDP (8), IPv4 (20) and Ethernet (14) headers, and a 4-byte checksum",
+        }
+      : {
+          amount: "2 × 61 bytes",
+          what: "two queries, A and AAAA: each a 33-byte question in UDP (8) and IPv4 (20) headers, waiting for the router's MAC address",
+        },
     aws: AWS_DNS_QUOTA,
   });
 
@@ -279,6 +291,7 @@ function dnsSteps(m: MachineState): Step[] {
         aws: {
           service: "Amazon VPC",
           text: "An EC2 instance asks the same about its gateway, the VPC router, which always sits at the subnet's base address plus one (10.0.0.1 in 10.0.0.0/24). A VPC doesn't support broadcast, though, so the request is never flooded to the other instances in the subnet.",
+          source: "https://docs.aws.amazon.com/vpc/latest/userguide/subnet-sizing.html",
         },
       },
       {
@@ -434,6 +447,7 @@ function dnsSteps(m: MachineState): Step[] {
         aws: {
           service: "Amazon Route 53",
           text: "If example.com were a public hosted zone in Route 53, this server would be one of the four name servers Route 53 lists for every hosted zone, with names like ns-2048.awsdns-64.com, ns-2049.awsdns-65.net, ns-2050.awsdns-66.org and ns-2051.awsdns-67.co.uk.",
+          source: "https://docs.aws.amazon.com/Route53/latest/DeveloperGuide/SOA-NSrecords.html",
         },
       },
       {
@@ -671,6 +685,7 @@ function tcpSteps(): Step[] {
       aws: {
         service: "AWS NAT gateway",
         text: "A NAT gateway does this for instances in a private subnet: it replaces their private source address with its own Elastic IP address and translates the replies back. Each of its addresses supports up to 55,000 simultaneous connections to each unique destination (the same IP address, port and protocol).",
+        source: "https://docs.aws.amazon.com/vpc/latest/userguide/nat-gateway-working-with.html",
       },
     },
     {
@@ -772,6 +787,7 @@ function tlsSteps(): Step[] {
       aws: {
         service: "Application Load Balancer",
         text: "The server name in this ClientHello (SNI) is how one load balancer serves many sites: an ALB's HTTPS listener can hold several certificates and picks the one that matches the name the browser asked for.",
+        source: "https://aws.amazon.com/about-aws/whats-new/2017/10/elastic-load-balancing-application-load-balancers-now-support-multiple-ssl-certificates-and-smart-certificate-selection-using-server-name-indication-sni/",
       },
     },
     {
@@ -789,6 +805,7 @@ function tlsSteps(): Step[] {
       aws: {
         service: "Elastic Load Balancing",
         text: "On an ALB, the listener's security policy decides what the server may pick here: which TLS versions and cipher suites it accepts. ELBSecurityPolicy-TLS13-1-2-2021-06, for example, allows TLS 1.3 and 1.2 only.",
+        source: "https://docs.aws.amazon.com/elasticloadbalancing/latest/application/describe-ssl-policies.html",
       },
     },
     {
@@ -838,6 +855,7 @@ function httpSteps(query: string, reused: boolean): Step[] {
       aws: {
         service: "Application Load Balancer",
         text: "An ALB decrypts this request and routes on what it carries: the host name, the path (/search here), headers or query strings. It takes HTTP/2 from browsers and sends HTTP/1.1 to its targets unless the target group asks for HTTP/2 or gRPC.",
+        source: "https://docs.aws.amazon.com/elasticloadbalancing/latest/APIReference/API_CreateTargetGroup.html",
       },
     },
     {
@@ -927,6 +945,7 @@ export function webSearch(query: string, m: MachineState): Scenario {
     aws: {
       service: "Elastic Load Balancing",
       text: "Reuse has a time limit: an Application Load Balancer closes a connection that has carried no data for 60 seconds, its default idle timeout (adjustable from 1 to 4,000 seconds).",
+      source: "https://docs.aws.amazon.com/elasticloadbalancing/latest/application/edit-load-balancer-attributes.html",
     },
     body: reused
       ? "One encrypted request and response, no handshakes. Close the browser to drop the connection, or clear the caches to start cold."

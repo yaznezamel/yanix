@@ -75,6 +75,7 @@ function bootSteps(): Step[] {
       aws: {
         service: "Amazon EC2",
         text: "EC2 instances boot the same way: an AMI's boot mode says legacy BIOS or UEFI, and UEFI is the default on Graviton (Arm) instance types. The firmware runs inside the virtual machine, before your operating system.",
+        source: "https://docs.aws.amazon.com/AWSEC2/latest/UserGuide/ami-boot.html",
       },
       ui: { screen: "firmware", clearBootLog: true },
     },
@@ -295,6 +296,7 @@ export function login(): Scenario {
       aws: {
         service: "EC2 Instance Connect",
         text: "Logging in to an EC2 instance usually means SSH with a key, not a password. EC2 Instance Connect pushes a one-time public key into the instance metadata, where it stays usable for 60 seconds, and sshd checks your login against it.",
+        source: "https://docs.aws.amazon.com/AWSEC2/latest/UserGuide/ec2-instance-connect-methods.html",
       },
     },
     {
@@ -339,6 +341,7 @@ function shutdownSteps(restart: boolean): Step[] {
       aws: {
         service: "EC2 Auto Scaling lifecycle hooks",
         text: "An inhibitor lock delays a shutdown so an app can finish its work. Lifecycle hooks do the same for Auto Scaling: they hold a terminating instance in a wait state, for one hour by default, until your script says it's done.",
+        source: "https://docs.aws.amazon.com/autoscaling/ec2/userguide/adding-lifecycle-hooks.html",
       },
     },
     {
@@ -352,6 +355,7 @@ function shutdownSteps(restart: boolean): Step[] {
       aws: {
         service: "Amazon EC2 Spot Instances",
         text: "A Spot Instance gets the same courtesy on a larger scale: a two-minute interruption notice, through instance metadata and EventBridge, before AWS stops or terminates it.",
+        source: "https://docs.aws.amazon.com/AWSEC2/latest/UserGuide/spot-instance-termination-notices.html",
       },
       learns: { connectionOpen: false },
       ui: { closeAll: true, screen: "shutdown" },

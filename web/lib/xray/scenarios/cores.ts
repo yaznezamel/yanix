@@ -203,6 +203,7 @@ function runSteps(t: Tracer<CoresState>, layout: CoresLayout): void {
       aws: {
         service: "Amazon DynamoDB",
         text: "Big things get their own storage: a DynamoDB item can be at most 400 KB, so large payloads go to S3 with a pointer kept in the table. malloc() treats big blocks the same way: from 128 KiB up each gets a mapping of its own, and the heap keeps the small ones.",
+        source: "https://docs.aws.amazon.com/amazondynamodb/latest/developerguide/Constraints.html",
       },
     },
     { heap, mapped: true, at: LINE.malloc },
@@ -412,6 +413,7 @@ function roundSteps(t: Tracer<CoresState>, layout: CoresLayout, typed: string, t
         aws: {
           service: "Amazon EC2",
           text: "On most x86 EC2 instance types a vCPU is one hardware thread of a physical core, so 4 vCPUs are 2 cores. On instances powered by AWS Graviton processors each vCPU is a whole core, so a c7g.xlarge (4 vCPUs) gives these threads 4 real cores.",
+          source: "https://docs.aws.amazon.com/whitepapers/latest/financial-services-grid-computing/graviton-instances.html",
         },
       },
       {
