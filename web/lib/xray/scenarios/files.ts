@@ -201,7 +201,7 @@ function readSteps(reader: Reader, m: MachineState, file: string): Step[] {
         data: { amount: "4 KiB", what: "read from the flash cells, wherever the SSD's translation layer put the block" },
         aws: {
           service: "Amazon EC2 instance store",
-          text: "Some EC2 instance types, such as the I and D families, have NVMe SSDs on the host itself: instance store. Reads take this same path, without a network in between, but the data is lost when the instance stops.",
+          text: "Some EC2 instance types have NVMe SSDs on the host itself, called instance store: the storage-optimised I family, for example, and types with a d in their name such as m6id. Reads take this same path, without a network in between, but the data is lost when the instance stops.",
         },
       },
       {

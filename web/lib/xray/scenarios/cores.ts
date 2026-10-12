@@ -411,7 +411,7 @@ function roundSteps(t: Tracer<CoresState>, layout: CoresLayout, typed: string, t
         },
         aws: {
           service: "Amazon EC2",
-          text: "On EC2 a vCPU is usually one hardware thread of a physical core, so a 4-vCPU x86 instance has 2 cores. Instances powered by AWS Graviton processors are the exception: each vCPU is a whole core, so a c7g.xlarge (4 vCPUs) gives these threads 4 real cores.",
+          text: "On most x86 EC2 instance types a vCPU is one hardware thread of a physical core, so 4 vCPUs are 2 cores. On instances powered by AWS Graviton processors each vCPU is a whole core, so a c7g.xlarge (4 vCPUs) gives these threads 4 real cores.",
         },
       },
       {
